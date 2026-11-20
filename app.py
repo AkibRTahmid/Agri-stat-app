@@ -1,5 +1,5 @@
 """
-AgriStat Studio – Enterprise Biometrics & Experimental Design Suite (v3.4)
+AgriStat Studio – Enterprise Biometrics & Experimental Design Suite (v3.5)
 Designs : CRD | RCBD | Factorial (RCBD) | Split-Plot (RCBD)
 Methods : Tukey HSD, LSD, Bonferroni, Duncan (DMRT), SNK, Dunnett (vs Control)
 Analytics: GLM (Type I/III SS), Trend Contrasts, Interaction Slicing, Genetic Parameters
@@ -64,30 +64,39 @@ html, body, .stApp, p, label, li, td, th, h1, h2, h3, h4, input, button, textare
 button[data-baseweb="tab"] { font-size: 0.95rem !important; font-weight: 600 !important; }
 [data-testid="stSidebar"] { border-right: 1px solid rgba(128,128,128,0.20); }
 
-/* ১০০% নিশ্চিত সাইডবার টগল বাটন: স্ক্রিনের বাঁ-পাশে সবসময় ফ্লোটিং নীল বাটন হিসেবে থাকবে */
+/* Streamlit-এর যেকোনো ভার্সনে সাইডবার খোলার নিশ্চিত ফ্লোটিং নীল বাটন */
+header [data-testid="stSidebarCollapseButton"],
+header button[aria-label*="sidebar" i],
+header button[aria-label*="Sidebar" i],
 [data-testid="stSidebarCollapsedControl"],
 [data-testid="collapsedControl"] {
     display: flex !important;
     visibility: visible !important;
     opacity: 1 !important;
-    z-index: 9999999 !important;
+    z-index: 99999999 !important;
     position: fixed !important;
-    top: 14px !important;
-    left: 14px !important;
+    top: 12px !important;
+    left: 12px !important;
     background: #0284c7 !important;
     border: 1px solid #38bdf8 !important;
     border-radius: 8px !important;
-    padding: 6px !important;
-    box-shadow: 0 4px 14px rgba(2, 132, 199, 0.45) !important;
+    width: 36px !important;
+    height: 36px !important;
+    align-items: center !important;
+    justify-content: center !important;
+    box-shadow: 0 4px 14px rgba(2, 132, 199, 0.5) !important;
     cursor: pointer !important;
 }
 
-[data-testid="stSidebarCollapsedControl"] svg,
-[data-testid="collapsedControl"] svg {
+header [data-testid="stSidebarCollapseButton"] svg,
+header button svg,
+[data-testid="stSidebarCollapsedControl"] svg {
     fill: #ffffff !important;
     stroke: #ffffff !important;
-    width: 22px !important;
-    height: 22px !important;
+    color: #ffffff !important;
+    display: block !important;
+    width: 20px !important;
+    height: 20px !important;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -696,6 +705,7 @@ def studentized_residuals(fit):
 def generate_sample_dataset(design):
     rng = np.random.default_rng(2026)
     if design == "CRD":
+        # Tomato Cultivar Trial (4 cultivars x 5 replications)
         trts = ["Cultivar_Alpha", "Cultivar_Beta", "Cultivar_Gamma", "Cultivar_Delta"]
         rows = []
         for t, base in zip(trts, [52.4, 61.2, 70.8, 64.5]):
@@ -708,6 +718,7 @@ def generate_sample_dataset(design):
         return pd.DataFrame(rows)
 
     elif design == "RCBD":
+        # Maize Nitrogen Trial (5 levels of N x 4 blocks)
         trts = ["N0_Control", "N60_kg_ha", "N120_kg_ha", "N180_kg_ha", "N240_kg_ha"]
         rows = []
         for r in range(4):
