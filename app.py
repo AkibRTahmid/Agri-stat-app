@@ -1,5 +1,5 @@
 """
-AgriStat Studio – Enterprise Biometrics & Experimental Design Suite (v3.0)
+AgriStat Studio – Enterprise Biometrics & Experimental Design Suite (v3.2)
 Designs : CRD | RCBD | Factorial (RCBD) | Split-Plot (RCBD)
 Methods : Tukey HSD, LSD, Bonferroni, Duncan (DMRT), SNK, Dunnett (vs Control)
 Analytics: GLM (Type I/III SS), Trend Contrasts, Interaction Slicing, Genetic Parameters
@@ -33,20 +33,23 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# ───────────────────────── UI Styling (Light/Dark Compatible) ─────────────────────────
+# ───────────────────────── UI Styling (Mobile-Friendly & Theme-Safe) ─────────────────────────
 st.markdown("""
 <style>
 @import url('https://fonts.maateen.me/kalpurush/font.css');
 
+/* Hide toolbar / deploy / footer while preserving the mobile sidebar toggle */
 [data-testid="stToolbar"], [data-testid="stDecoration"], .stDeployButton,
 #MainMenu, footer { display: none !important; }
 header[data-testid="stHeader"] { background: transparent !important; }
 
+/* System typography */
 html, body, .stApp, p, label, li, td, th, h1, h2, h3, h4, input, button, textarea {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Kalpurush",
                  "Helvetica Neue", Arial, sans-serif !important;
 }
 
+/* Translucent KPI cards for adaptive dark/light backgrounds */
 [data-testid="stMetric"] {
     background: rgba(128,128,128,0.07);
     border: 1px solid rgba(128,128,128,0.22);
@@ -124,9 +127,12 @@ def _okey(prefix, options):
     return f"{prefix}_{zlib.crc32('|'.join(map(str, options)).encode('utf-8'))}"
 
 
+# ফিক্সড সাইডবার ক্যাপশন (নেগেটিভ মার্জিন সরিয়ে মোবাইল ওভারল্যাপ সমাধান)
 def _sb_caption(en, bn):
-    st.sidebar.markdown(f"<div style='font-size:0.84rem;margin:5px 0 -0.6rem 0;opacity:.85'>{tr(en, bn)}</div>",
-                        unsafe_allow_html=True)
+    st.sidebar.markdown(
+        f"<div style='font-size:0.86rem; font-weight:600; margin:14px 0 5px 0; opacity:0.9;'>{tr(en, bn)}</div>",
+        unsafe_allow_html=True
+    )
 
 
 def sb_select(en, bn, options, key, index=0, format_func=str, help=None):
@@ -231,7 +237,7 @@ def prepare(df, design, cols, y, tf="None", avg_dup=False):
         keys = list(sel.keys())
         d = d.groupby(keys, sort=False, as_index=False)["Y0"].mean()
 
-    # Transformation domain safety checks
+    # Transformation domain checks
     if tf == "log10(x)" and (d["Y0"] <= 0).any():
         raise AnalysisError("log10(x) requires all values > 0. Use log10(x + 1) for zeros.",
                             "log10(x) এর জন্য সব মান > 0 হতে হবে। শূন্য থাকলে log10(x + 1) ব্যবহার করুন।")
@@ -240,7 +246,7 @@ def prepare(df, design, cols, y, tf="None", avg_dup=False):
     if tf == "sqrt(x + 0.5)" and (d["Y0"] < -0.5).any():
         raise AnalysisError("sqrt(x + 0.5) requires all values ≥ -0.5.", "sqrt(x + 0.5) এর জন্য মান ≥ -0.5 হতে হবে।")
     if tf == "arcsine (%)" and ((d["Y0"] < 0) | (d["Y0"] > 100)).any():
-        raise AnalysisError("arcsine (%) requires values between 0 and 100.", "arcsine (%) এর জন্য মান ০–১০০ এর মধ্যে হতে হবে।")
+        raise AnalysisError("arcsine (%) requires percentage values between 0 and 100.", "arcsine (%) এর জন্য মান ০–১০০ এর মধ্যে হতে হবে।")
 
     d["Y"] = TRANSFORMS[tf](d["Y0"].to_numpy())
 
@@ -400,7 +406,6 @@ def make_crit(method, alpha, mse, dfe, r, k):
         m = max(k - 1, 1)
         c = stats.t.ppf(1 - alpha / m, dfe) * np.sqrt(2) * se
         return lambda p: c
-    # Duncan (DMRT)
     return lambda p: stats.studentized_range.ppf((1 - alpha) ** (max(p, 2) - 1), max(p, 2), dfe) * se
 
 
@@ -657,66 +662,70 @@ def studentized_residuals(fit):
     return e / np.sqrt(np.clip(s2_i, 1e-300, None) * (1 - h))
 
 
-# ───────────────────────── Benchmark Data Generator ─────────────────────────
+# ───────────────────────── New Generic Agricultural Datasets ─────────────────────────
 def generate_sample_dataset(design):
     rng = np.random.default_rng(2026)
     if design == "CRD":
-        trts = ["Control", "Biochar 5 t/ha", "Biochar 10 t/ha", "Biochar 15 t/ha"]
+        # Tomato Cultivar Trial (4 cultivars x 5 replications)
+        trts = ["Cultivar_Alpha", "Cultivar_Beta", "Cultivar_Gamma", "Cultivar_Delta"]
         rows = []
-        for t, base in zip(trts, [38.2, 44.5, 51.0, 48.7]):
+        for t, base in zip(trts, [52.4, 61.2, 70.8, 64.5]):
             for _ in range(5):
                 rows.append({
-                    "Treatment": t,
-                    "Grain_Yield": round(base + rng.normal(0, 1.8), 2),
-                    "Biomass": round(base * 2.1 + rng.normal(0, 2.5), 2)
+                    "Cultivar": t,
+                    "Fruit_Yield_kg": round(base + rng.normal(0, 2.4), 2),
+                    "Brix_Percent": round(base * 0.08 + rng.normal(0, 0.25), 2)
                 })
         return pd.DataFrame(rows)
 
     elif design == "RCBD":
-        trts = ["T0 (0 mM)", "T1 (50 mM)", "T2 (100 mM)", "T3 (150 mM)", "T4 (200 mM)"]
+        # Maize Nitrogen Trial (5 levels of N x 4 blocks)
+        trts = ["N0_Control", "N60_kg_ha", "N120_kg_ha", "N180_kg_ha", "N240_kg_ha"]
         rows = []
         for r in range(4):
-            blk = rng.normal(0, 1.1)
-            for t, base in zip(trts, [44.0, 39.5, 33.2, 26.8, 19.5]):
+            blk = rng.normal(0, 0.25)
+            for t, base in zip(trts, [3.2, 5.1, 7.4, 8.6, 8.1]):
                 rows.append({
-                    "Replication": f"R{r+1}",
-                    "Salinity": t,
-                    "Grain_Yield": round(base + blk + rng.normal(0, 0.9), 2),
-                    "Plant_Height": round(base * 1.8 + blk + rng.normal(0, 1.5), 2)
+                    "Block": f"Block_{r+1}",
+                    "Nitrogen_Level": t,
+                    "Grain_Yield_t_ha": round(base + blk + rng.normal(0, 0.18), 2),
+                    "Ear_Length_cm": round(base * 2.2 + blk * 0.5 + rng.normal(0, 0.4), 2)
                 })
         return pd.DataFrame(rows)
 
     elif design == "FACT":
-        irr = ["I0 (Dry)", "I1 (Moderate)", "I2 (Adequate)"]
-        nit = ["N0", "N60", "N120"]
+        # Rice Crop Spacing x Potassium Fertilizer
+        spacing = ["Spacing_15cm", "Spacing_20cm", "Spacing_25cm"]
+        k_levels = ["K0_Control", "K40_kg_ha", "K80_kg_ha"]
         rows = []
         for r in range(3):
-            blk = rng.normal(0, 0.9)
-            for i, base_i in zip(irr, [30.0, 42.0, 50.0]):
-                for n, base_n in zip(nit, [0.0, 8.0, 14.0]):
+            blk = rng.normal(0, 0.2)
+            for sp, b_sp in zip(spacing, [4.0, 5.2, 4.8]):
+                for k, b_k in zip(k_levels, [0.0, 0.8, 1.4]):
                     rows.append({
-                        "Block": f"B{r+1}",
-                        "Irrigation": i,
-                        "Nitrogen": n,
-                        "Yield_t_ha": round(base_i + base_n + blk + rng.normal(0, 1.0), 2)
+                        "Replication": f"Rep_{r+1}",
+                        "Spacing": sp,
+                        "Potassium": k,
+                        "Yield_t_ha": round(b_sp + b_k + blk + rng.normal(0, 0.15), 2)
                     })
         return pd.DataFrame(rows)
 
     else:  # SPLIT
-        main_plots = ["Tillage_Zero", "Tillage_Conv", "Tillage_Deep"]
-        sub_plots = ["Var_A (Saline)", "Var_B (Local)", "Var_C (Hybrid)"]
+        # Soybean Irrigation (Main) x Sowing Date (Sub)
+        main_plots = ["Irrig_Rainfed", "Irrig_Full"]
+        sub_plots = ["Sowing_Early", "Sowing_Mid", "Sowing_Late"]
         rows = []
         for r in range(3):
-            for mp, bmp in zip(main_plots, [32.0, 40.0, 43.0]):
-                err_a = rng.normal(0, 1.4)
-                for sp, bsp in zip(sub_plots, [8.0, 2.0, 12.0]):
-                    err_b = rng.normal(0, 0.8)
+            for mp, bmp in zip(main_plots, [2.1, 3.4]):
+                err_a = rng.normal(0, 0.15)
+                for sp, bsp in zip(sub_plots, [0.6, 0.2, -0.4]):
+                    err_b = rng.normal(0, 0.08)
                     rows.append({
-                        "Rep": f"R{r+1}",
-                        "MainPlot_Tillage": mp,
-                        "SubPlot_Variety": sp,
-                        "Root_Length": round(bmp + bsp + err_a + err_b, 2),
-                        "Grain_Yield": round((bmp + bsp) * 0.8 + err_a + err_b, 2)
+                        "Rep": f"Block_{r+1}",
+                        "Irrigation_Main": mp,
+                        "SowingDate_Sub": sp,
+                        "Pod_Count": round((bmp + bsp + err_a + err_b) * 22, 1),
+                        "Seed_Yield_t_ha": round(bmp + bsp + err_a + err_b, 2)
                     })
         return pd.DataFrame(rows)
 
@@ -750,11 +759,11 @@ def guess_columns(df, spec):
         if rep is None:
             rep = next((c for c in cols if is_cat[c]), cols[0])
     rest = [c for c in cols if c != rep]
-    pref_a = [c for c in rest if re.search(r"treat|trt|salin|till|geno|main|factor_a|irrig|variety", c, re.I)]
+    pref_a = [c for c in rest if re.search(r"treat|trt|nitro|cultivar|main|factor_a|spacing|variety", c, re.I)]
     cat_a = [c for c in rest if is_cat[c]]
     a = (pref_a or cat_a or rest or cols)[0]
     rest_b = [c for c in rest if c != a]
-    pref_b = [c for c in rest_b if re.search(r"sub|factor_b|nitro|^b$", c, re.I)]
+    pref_b = [c for c in rest_b if re.search(r"sub|factor_b|potassium|sowing|^b$", c, re.I)]
     cat_b = [c for c in rest_b if is_cat[c]]
     b = (pref_b or cat_b or rest_b or [None])[0]
     return {"rep": rep, "a": a, "b": b}
@@ -1118,7 +1127,7 @@ elif design_key == "FACT":
 else:  # SPLIT
     fam_specs = [(("A",), SPLIT_ERR_A, A_lbl, True), (("B",), "RES", B_lbl, True), (("A", "B"), "RES", f"{A_lbl} × {B_lbl}", False)]
 
-# Dunnett control level selector if Dunnett is picked
+# Dunnett control level selector
 ctrl_index_val = 0
 if comp_method == "Dunnett (vs Control)":
     lvl_a = list(dict.fromkeys(clean_d["A"]))
