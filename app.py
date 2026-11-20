@@ -1,5 +1,5 @@
 """
-AgriStat Studio – Enterprise Biometrics & Experimental Design Suite (v3.5)
+AgriStat Studio – Enterprise Biometrics & Experimental Design Suite (v3.6)
 Designs : CRD | RCBD | Factorial (RCBD) | Split-Plot (RCBD)
 Methods : Tukey HSD, LSD, Bonferroni, Duncan (DMRT), SNK, Dunnett (vs Control)
 Analytics: GLM (Type I/III SS), Trend Contrasts, Interaction Slicing, Genetic Parameters
@@ -33,19 +33,24 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# ───────────────────────── UI Styling (Fixed Floating Sidebar Toggle) ─────────────────────────
+# ───────────────────────── UI Styling (Robust Sidebar Toggle) ─────────────────────────
 st.markdown("""
 <style>
 @import url('https://fonts.maateen.me/kalpurush/font.css');
 
-/* Hide toolbar, deploy button & footer */
-[data-testid="stToolbar"], [data-testid="stDecoration"], .stDeployButton,
-#MainMenu, footer { display: none !important; }
+/* Hide GitHub fork/star, Streamlit deploy button, rainbow decoration line & footer */
+[data-testid="stToolbarActions"],
+.stDeployButton,
+[data-testid="stDecoration"],
+#MainMenu,
+footer { 
+    display: none !important; 
+}
 
-/* Keep header area clean */
+/* Ensure header is transparent and clickable */
 header[data-testid="stHeader"] { 
-    background: transparent !important; 
-    height: 3rem !important;
+    background: transparent !important;
+    pointer-events: auto !important;
 }
 
 /* System typography */
@@ -54,7 +59,7 @@ html, body, .stApp, p, label, li, td, th, h1, h2, h3, h4, input, button, textare
                  "Helvetica Neue", Arial, sans-serif !important;
 }
 
-/* Adaptive KPI cards */
+/* Translucent KPI cards for adaptive dark/light backgrounds */
 [data-testid="stMetric"] {
     background: rgba(128,128,128,0.07);
     border: 1px solid rgba(128,128,128,0.22);
@@ -64,37 +69,39 @@ html, body, .stApp, p, label, li, td, th, h1, h2, h3, h4, input, button, textare
 button[data-baseweb="tab"] { font-size: 0.95rem !important; font-weight: 600 !important; }
 [data-testid="stSidebar"] { border-right: 1px solid rgba(128,128,128,0.20); }
 
-/* Streamlit-এর যেকোনো ভার্সনে সাইডবার খোলার নিশ্চিত ফ্লোটিং নীল বাটন */
-header [data-testid="stSidebarCollapseButton"],
-header button[aria-label*="sidebar" i],
-header button[aria-label*="Sidebar" i],
+/* সাইডবার বন্ধ হলে যাতে রি-ওপেন বাটনটি সবসময় উজ্জ্বল ও দৃশ্যমান থাকে */
 [data-testid="stSidebarCollapsedControl"],
 [data-testid="collapsedControl"] {
-    display: flex !important;
+    display: block !important;
     visibility: visible !important;
     opacity: 1 !important;
-    z-index: 99999999 !important;
-    position: fixed !important;
-    top: 12px !important;
-    left: 12px !important;
-    background: #0284c7 !important;
+    z-index: 999999 !important;
+}
+
+[data-testid="stSidebarCollapsedControl"] button,
+[data-testid="collapsedControl"] button {
+    background-color: #0284c7 !important;
     border: 1px solid #38bdf8 !important;
     border-radius: 8px !important;
-    width: 36px !important;
-    height: 36px !important;
+    width: 38px !important;
+    height: 38px !important;
+    display: flex !important;
     align-items: center !important;
     justify-content: center !important;
-    box-shadow: 0 4px 14px rgba(2, 132, 199, 0.5) !important;
+    box-shadow: 0 4px 12px rgba(2, 132, 199, 0.45) !important;
     cursor: pointer !important;
 }
 
-header [data-testid="stSidebarCollapseButton"] svg,
-header button svg,
-[data-testid="stSidebarCollapsedControl"] svg {
+[data-testid="stSidebarCollapsedControl"] button:hover,
+[data-testid="collapsedControl"] button:hover {
+    background-color: #0369a1 !important;
+}
+
+[data-testid="stSidebarCollapsedControl"] button svg,
+[data-testid="collapsedControl"] button svg {
     fill: #ffffff !important;
     stroke: #ffffff !important;
     color: #ffffff !important;
-    display: block !important;
     width: 20px !important;
     height: 20px !important;
 }
@@ -276,7 +283,7 @@ def prepare(df, design, cols, y, tf="None", avg_dup=False):
         keys = list(sel.keys())
         d = d.groupby(keys, sort=False, as_index=False)["Y0"].mean()
 
-    # Domain safety checks
+    # Transformation domain checks
     if tf == "log10(x)" and (d["Y0"] <= 0).any():
         raise AnalysisError("log10(x) requires all values > 0. Use log10(x + 1) for zeros.",
                             "log10(x) এর জন্য সব মান > 0 হতে হবে। শূন্য থাকলে log10(x + 1) ব্যবহার করুন।")
@@ -705,7 +712,6 @@ def studentized_residuals(fit):
 def generate_sample_dataset(design):
     rng = np.random.default_rng(2026)
     if design == "CRD":
-        # Tomato Cultivar Trial (4 cultivars x 5 replications)
         trts = ["Cultivar_Alpha", "Cultivar_Beta", "Cultivar_Gamma", "Cultivar_Delta"]
         rows = []
         for t, base in zip(trts, [52.4, 61.2, 70.8, 64.5]):
@@ -718,7 +724,6 @@ def generate_sample_dataset(design):
         return pd.DataFrame(rows)
 
     elif design == "RCBD":
-        # Maize Nitrogen Trial (5 levels of N x 4 blocks)
         trts = ["N0_Control", "N60_kg_ha", "N120_kg_ha", "N180_kg_ha", "N240_kg_ha"]
         rows = []
         for r in range(4):
