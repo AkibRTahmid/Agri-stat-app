@@ -1,8 +1,11 @@
 """
-AgriStat Pro – RCBD Field Trial Analyzer
-RCBD ANOVA | LSD / Tukey / Duncan with letter grouping | Assumption checks |
-Transformations | Multi-trait summary | Excel + Word + PNG/PDF export | EN/BN
+AgriStat Studio – Professional Experimental Design & Biometrics Engine
+Designs : CRD | RCBD | Factorial (RCBD) | Split-Plot (RCBD)
+Methods : Tukey HSD, LSD, Bonferroni, Duncan (DMRT), SNK
+Engine  : Pure NumPy / SciPy / Pandas (Type I / Type III SS, EMS Error Architecture)
 """
+from __future__ import annotations
+
 import io
 import itertools
 import string
@@ -13,88 +16,305 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import statsmodels.api as sm
-import streamlit as st
 from scipy import stats
-from statsmodels.formula.api import ols
+import streamlit as st
 
 warnings.filterwarnings("ignore")
 
-# পেজ কনফিগারেশন (গমের ছবি বাদ দিয়ে ক্লিন স্টাইল)
-st.set_page_config(page_title="AgriStat Pro | Field Trial Suite", layout="wide")
+# ───────────────────────── Page Configuration ─────────────────────────
+st.set_page_config(
+    page_title="AgriStat Studio | Biometrics Engine",
+    page_icon="📐",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
-# সিএসএস: গিটহাব লোগো, ফোর্ক এবং টপবার সম্পূর্ণ হাইড + প্রফেশনাল টাইপোগ্রাফি
-st.markdown("""<style>
+# ───────────────────────── Elite UI Styling ─────────────────────────
+st.markdown("""
+<style>
 @import url('https://fonts.maateen.me/kalpurush/font.css');
 
-/* গিটহাব হেডার, ফোর্ক বাটন ও মেনু সম্পূর্ণ হাইড */
-header[data-testid="stHeader"] {
-    display: none !important;
-}
-#MainMenu {
-    display: none !important;
-}
-footer {
-    display: none !important;
-}
-.stDeployButton {
-    display: none !important;
+/* Hide Streamlit Top Header, Fork, Hamburger & Deploy Button */
+header[data-testid="stHeader"] { display: none !important; }
+#MainMenu { display: none !important; }
+footer { display: none !important; }
+.stDeployButton { display: none !important; }
+
+/* Global Typography: Times New Roman & Kalpurush */
+html, body, .stApp, p, label, li, td, th, h1, h2, h3, h4, input, button {
+    font-family: 'Times New Roman', 'Kalpurush', 'Liberation Serif', serif !important;
 }
 
-/* ফন্ট ও বডি স্টাইল */
-html, body, .stApp, p, label, li, td, th, h1, h2, h3, h4 {
-    font-family: 'Times New Roman', 'Kalpurush', 'Liberation Serif', serif;
-}
-
-/* মেট্রিক কার্ড ডিজাইন */
+/* Metric / KPI Cards (JMP Inspired) */
 [data-testid="stMetric"] {
-    background: rgba(56, 189, 248, 0.05);
-    border: 1px solid rgba(56, 189, 248, 0.2);
-    border-radius: 12px;
-    padding: 12px 16px;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.03);
+    background: #0f172a08;
+    border: 1px solid #0f172a18;
+    border-radius: 10px;
+    padding: 10px 16px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.02);
 }
 
-/* সাইডবার টগল বাটন পজিশন ফিক্স */
+/* Tab Headers */
+button[data-baseweb="tab"] {
+    font-size: 0.98rem !important;
+    font-weight: 600 !important;
+}
+
+/* Sidebar Styling */
+[data-testid="stSidebar"] {
+    border-right: 1px solid #e2e8f0;
+}
 [data-testid="collapsedControl"] {
     top: 15px;
     left: 15px;
 }
-</style>""", unsafe_allow_html=True)
+</style>
+""", unsafe_allow_html=True)
 
-plt.rcParams.update({"font.family": "serif",
-                     "font.serif": ["Times New Roman", "Liberation Serif", "DejaVu Serif"]})
+plt.rcParams.update({
+    "font.family": "serif",
+    "font.serif": ["Times New Roman", "Kalpurush", "Liberation Serif", "DejaVu Serif"]
+})
 
-# ───────────────────────── Language ─────────────────────────
-st.sidebar.markdown("### 🌐 Language / ভাষা")
-BN = st.sidebar.radio("Language", ("English", "বাংলা"), horizontal=True,
-                      label_visibility="collapsed") == "বাংলা"
-
-
-def tr(en, bn):
-    return bn if BN else en
-
-
-# ───────────────────────── Statistics core ─────────────────────────
+# ───────────────────────── Statistical Core Constants ─────────────────────────
 TRANSFORMS = {
     "None": lambda y: y,
     "log10": lambda y: np.log10(y),
     "sqrt": lambda y: np.sqrt(y),
     "arcsine (%)": lambda y: np.degrees(np.arcsin(np.sqrt(y / 100))),
 }
-METHODS = ["Tukey HSD", "LSD", "Duncan (DMRT)"]
+METHODS = ["Tukey HSD", "LSD", "Bonferroni", "Duncan (DMRT)", "SNK"]
 
+DESIGNS = {
+    "CRD": dict(terms=[("A",)], err={}, needs_rep=False, two_factor=False, label="Completely Randomized (CRD)"),
+    "RCBD": dict(terms=[("REP",), ("A",)], err={}, needs_rep=True, two_factor=False, label="Randomized Block (RCBD)"),
+    "FACT": dict(terms=[("REP",), ("A",), ("B",), ("A", "B")], err={}, needs_rep=True, two_factor=True, label="Factorial RCBD (A × B)"),
+    "SPLIT": dict(
+        terms=[("REP",), ("A",), ("REP", "A"), ("B",), ("A", "B")],
+        err={("REP",): ("REP", "A"), ("A",): ("REP", "A")},
+        needs_rep=True, two_factor=True, label="Split-Plot RCBD (Main/Sub)"
+    ),
+}
+SPLIT_ERR_A = ("REP", "A")
+
+class AnalysisError(ValueError):
+    def __init__(self, en, bn=None):
+        super().__init__(en)
+        self.en, self.bn = en, bn or en
+
+# ───────────────────────── Language Switcher ─────────────────────────
+st.sidebar.markdown("### 🌐 Interface / ভাষা")
+BN = st.sidebar.radio("Lang", ("English", "বাংলা"), horizontal=True, label_visibility="collapsed") == "বাংলা"
+
+def tr(en, bn):
+    return bn if BN else en
+
+# ───────────────────────── Mathematical Utilities ─────────────────────────
+def sig_stars(p, alpha=0.05):
+    if p is None or pd.isna(p):
+        return ""
+    return "***" if p < 0.001 else "**" if p < 0.01 else "*" if p < alpha else "ns"
+
+def fmt_p(p):
+    if p is None or pd.isna(p):
+        return ""
+    return "<0.0001" if p < 0.0001 else f"{p:.4f}"
+
+def _sum_cols(codes, n_levels):
+    m = np.zeros((len(codes), n_levels - 1))
+    for j in range(n_levels - 1):
+        m[codes == j, j] = 1.0
+    m[codes == n_levels - 1, :] = -1.0
+    return m
+
+def term_matrix(df, term, levels):
+    out = None
+    for f in term:
+        codes = df[f].map({lv: i for i, lv in enumerate(levels[f])}).to_numpy()
+        mf = _sum_cols(codes, len(levels[f]))
+        out = mf if out is None else (out[:, :, None] * mf[:, None, :]).reshape(len(df), -1)
+    return out
+
+def _ls(X, y):
+    beta = np.linalg.lstsq(X, y, rcond=None)[0]
+    fitted = X @ beta
+    resid = y - fitted
+    return beta, fitted, resid, float(resid @ resid), int(np.linalg.matrix_rank(X))
+
+def _rss_rank(X, y):
+    r = _ls(X, y)
+    return r[3], r[4]
+
+def term_label(term, labels):
+    return " × ".join(labels[f] for f in term)
+
+# ───────────────────────── Data Engine ─────────────────────────
+def prepare(df, design, cols, y, tf="None", avg_dup=False):
+    spec = DESIGNS[design]
+    sel = {"A": cols["a"]}
+    if spec["needs_rep"]:
+        sel["REP"] = cols["rep"]
+    if spec["two_factor"]:
+        sel["B"] = cols["b"]
+    used = list(sel.values()) + [y]
+    if len(set(used)) != len(used):
+        raise AnalysisError("Treatment, block and response columns must all be different.",
+                            "ট্রিটমেন্ট, ব্লক ও রেসপন্স কলাম আলাদা হতে হবে।")
+    d = df[used].copy()
+    d.columns = list(sel.keys()) + ["Y0"]
+    d["Y0"] = pd.to_numeric(d["Y0"], errors="coerce")
+    d = d.dropna()
+    for f in sel:
+        d[f] = d[f].astype(str).str.strip()
+    if len(d) == 0:
+        raise AnalysisError("No valid numeric data.", "কোনো বৈধ সংখ্যাভিত্তিক ডেটা নেই।")
+
+    if avg_dup:
+        keys = list(sel.keys())
+        d = d.groupby(keys, sort=False, as_index=False)["Y0"].mean()
+
+    if tf == "log10" and (d["Y0"] <= 0).any():
+        raise AnalysisError("log10 needs all values > 0.", "log10 এর জন্য সব মান > 0 হতে হবে।")
+    if tf == "sqrt" and (d["Y0"] < 0).any():
+        raise AnalysisError("sqrt needs all values ≥ 0.", "sqrt এর জন্য সব মান ≥ 0 হতে হবে।")
+    if tf == "arcsine (%)" and ((d["Y0"] < 0) | (d["Y0"] > 100)).any():
+        raise AnalysisError("arcsine needs values between 0 and 100.", "arcsine এর জন্য মান ০–১০০ এর মধ্যে হতে হবে।")
+    d["Y"] = TRANSFORMS[tf](d["Y0"])
+
+    levels = {f: list(dict.fromkeys(d[f])) for f in sel}
+    if len(levels["A"]) < 2:
+        raise AnalysisError("Need at least 2 levels of the treatment factor.", "ট্রিটমেন্ট ফ্যাক্টরে কমপক্ষে ২টি লেভেল লাগবে।")
+    if spec["two_factor"] and len(levels["B"]) < 2:
+        raise AnalysisError("Need at least 2 levels of factor B.", "ফ্যাক্টর B তে কমপক্ষে ২টি লেভেল লাগবে।")
+    if spec["needs_rep"] and len(levels["REP"]) < 2:
+        raise AnalysisError("Need at least 2 replications/blocks.", "কমপক্ষে ২টি রেপ্লিকেশন/ব্লক লাগবে।")
+
+    keys = [f for f in ("REP", "A", "B") if f in sel]
+    if design == "CRD":
+        cnt = d.groupby("A").size()
+        balanced = cnt.nunique() == 1
+        n_missing = n_dupes = 0
+    else:
+        cell = d.groupby(keys).size()
+        expected = int(np.prod([len(levels[f]) for f in keys]))
+        n_missing = expected - len(cell)
+        n_dupes = int((cell > 1).sum())
+        balanced = n_missing == 0 and n_dupes == 0
+    info = dict(balanced=balanced, n_missing=n_missing, n_dupes=n_dupes, levels=levels, keys=keys)
+    if design == "SPLIT" and not balanced:
+        raise AnalysisError(
+            f"Split-plot requires a balanced layout. Found {n_missing} missing, {n_dupes} duplicate cells.",
+            f"স্প্লিট-প্লটের জন্য সম্পূর্ণ ব্যালান্সড ডেটা প্রয়োজন ({n_missing} মিসিং, {n_dupes} ডুপ্লিকেট সেল পাওয়া গেছে)।")
+    return d, info
+
+# ───────────────────────── General Linear Model (SAS/SPSS Equivalent) ─────────────────────────
+def fit_model(d, design, labels=None, sstype="III"):
+    labels = labels or {"REP": "Replication", "A": "A", "B": "B"}
+    spec = DESIGNS[design]
+    terms = spec["terms"]
+    levels = {f: list(dict.fromkeys(d[f])) for f in {f for t in terms for f in t}}
+    n = len(d)
+    y = d["Y"].to_numpy(float)
+    ones = np.ones((n, 1))
+    mats = [term_matrix(d, t, levels) for t in terms]
+    X = np.hstack([ones] + mats)
+    beta, fitted, resid, rss, rank = _ls(X, y)
+    dfe = n - rank
+    if dfe <= 0:
+        raise AnalysisError("No error degrees of freedom (DF <= 0).", "এরর ডিগ্রি অব ফ্রিডম (DF) নেই।")
+
+    rows = {}
+    for i, t in enumerate(terms):
+        if sstype == "I":
+            r0, k0 = _rss_rank(np.hstack([ones] + mats[:i]), y)
+            r1, k1 = _rss_rank(np.hstack([ones] + mats[:i + 1]), y)
+            ss, df_ = r0 - r1, k1 - k0
+        else:
+            r0, k0 = _rss_rank(np.hstack([ones] + mats[:i] + mats[i + 1:]), y)
+            ss, df_ = r0 - rss, rank - k0
+        rows[t] = dict(df=int(df_), ss=max(float(ss), 0.0))
+    for t, v in rows.items():
+        v["ms"] = v["ss"] / v["df"] if v["df"] > 0 else np.nan
+
+    mse = rss / dfe
+    err_terms = set(spec["err"].values())
+    E = {"RES": (mse, dfe)}
+    for et in err_terms:
+        E[et] = (rows[et]["ms"], rows[et]["df"])
+
+    out = []
+    for t in terms:
+        v = rows[t]
+        is_err = t in err_terms
+        ek = spec["err"].get(t, "RES")
+        ms_e, df_e = E[ek]
+        if is_err or v["df"] <= 0:
+            F = p = eta = np.nan
+        else:
+            F = v["ms"] / ms_e if ms_e > 0 else np.inf
+            p = float(stats.f.sf(F, v["df"], df_e)) if np.isfinite(F) else 0.0
+            eta = v["ss"] / (v["ss"] + ms_e * df_e) if (v["ss"] + ms_e * df_e) > 0 else 0
+        if is_err:
+            name, err_name = "Error (a)", ""
+        else:
+            name = term_label(t, labels)
+            err_name = "Error (a)" if ek != "RES" else ("Error (b)" if design == "SPLIT" else "Error")
+        out.append(dict(key=t, Source=name, DF=v["df"], SS=v["ss"], MS=v["ms"], F=F, P=p, EtaP=eta, ErrorTerm=err_name))
+
+    out.append(dict(key="RES", Source="Error (b)" if design == "SPLIT" else "Residual Error",
+                    DF=int(dfe), SS=rss, MS=mse, F=np.nan, P=np.nan, EtaP=np.nan, ErrorTerm=""))
+    tss = float(((y - y.mean()) ** 2).sum())
+    out.append(dict(key="TOT", Source="Corrected Total", DF=n - 1, SS=tss, MS=np.nan, F=np.nan, P=np.nan, EtaP=np.nan, ErrorTerm=""))
+    tbl = pd.DataFrame(out)
+
+    hat = np.einsum("ij,ji->i", X, np.linalg.pinv(X))
+    return dict(tbl=tbl, terms=terms, levels=levels, beta=beta, fitted=fitted, resid=resid, rss=rss, dfe=dfe,
+                mse=mse, tss=tss, r2=1 - rss / tss if tss > 0 else np.nan, E=E, hat=hat, n=n, labels=labels,
+                sstype=sstype, design=design, rank=rank)
+
+def display_anova(tbl, alpha):
+    t = tbl.copy()
+    return pd.DataFrame({
+        "Source of Variation": t["Source"],
+        "DF": t["DF"].astype(int),
+        "Sum of Squares": t["SS"].round(3),
+        "Mean Square": t["MS"].round(3),
+        "F-Ratio": t["F"].round(3),
+        "P-Value": [fmt_p(p) for p in t["P"]],
+        "Sig.": [sig_stars(p, alpha) for p in t["P"]],
+        "Partial η²": t["EtaP"].round(3),
+        "Error Term": t["ErrorTerm"]
+    }).fillna("—")
+
+# ───────────────────────── LS-Means & Post-Hoc Separation ─────────────────────────
+def ls_means(d, fit, family):
+    terms, levels, beta = fit["terms"], fit["levels"], fit["beta"]
+    facs = list(levels.keys())
+    grid = pd.DataFrame(list(itertools.product(*[levels[f] for f in facs])), columns=facs)
+    Xg = np.column_stack([np.ones(len(grid))] + [term_matrix(grid, t, levels) for t in terms])
+    grid["pred"] = Xg @ beta
+    g = grid.groupby(list(family), sort=False)["pred"].mean()
+    combos = list(itertools.product(*[levels[f] for f in family]))
+    vals = []
+    for c in combos:
+        vals.append(g.loc[c[0]] if len(family) == 1 else g.loc[c])
+    return combos, np.array(vals, float)
 
 def make_crit(method, alpha, mse, dfe, r, k):
     se = np.sqrt(mse / r)
     if method == "LSD":
         c = stats.t.ppf(1 - alpha / 2, dfe) * np.sqrt(2) * se
         return lambda p: c
+    if method == "Bonferroni":
+        m = max(k * (k - 1) / 2, 1)
+        c = stats.t.ppf(1 - alpha / (2 * m), dfe) * np.sqrt(2) * se
+        return lambda p: c
     if method == "Tukey HSD":
         c = stats.studentized_range.ppf(1 - alpha, k, dfe) * se
         return lambda p: c
-    return lambda p: stats.studentized_range.ppf((1 - alpha) ** (p - 1), p, dfe) * se
-
+    if method == "SNK":
+        return lambda p: stats.studentized_range.ppf(1 - alpha, max(p, 2), dfe) * se
+    return lambda p: stats.studentized_range.ppf((1 - alpha) ** (max(p, 2) - 1), max(p, 2), dfe) * se  # Duncan
 
 def letter_groups(means, crit):
     means = np.asarray(means, float)
@@ -106,8 +326,7 @@ def letter_groups(means, crit):
         while j + 1 < k and m[i] - m[j + 1] < crit(j + 2 - i):
             j += 1
         groups.add((i, j))
-    maximal = sorted(g for g in groups
-                     if not any(h != g and h[0] <= g[0] and h[1] >= g[1] for h in groups))
+    maximal = sorted(g for g in groups if not any(h != g and h[0] <= g[0] and h[1] >= g[1] for h in groups))
     abc = string.ascii_lowercase + string.ascii_uppercase
     lab = [""] * k
     for n, (i, j) in enumerate(maximal):
@@ -118,430 +337,463 @@ def letter_groups(means, crit):
         out[idx] = lab[pos]
     return out
 
-
-def sig_stars(p, alpha=0.05):
-    if pd.isna(p):
-        return ""
-    return "***" if p < 0.001 else "**" if p < 0.01 else "*" if p < alpha else "ns"
-
-
-def analyze(df, trt, rep, y, tf="None", alpha=0.05, method="Tukey HSD"):
-    d = df[[trt, rep, y]].copy()
-    d.columns = ["TRT", "REP", "Y0"]
-    d["Y0"] = pd.to_numeric(d["Y0"], errors="coerce")
-    d = d.dropna()
-    d["TRT"] = d["TRT"].astype(str).str.strip()
-    d["REP"] = d["REP"].astype(str).str.strip()
-    if tf == "log10" and (d["Y0"] <= 0).any():
-        raise ValueError(tr("log10 needs all values > 0.", "log10 এর জন্য সব মান > 0 হতে হবে।"))
-    if tf == "sqrt" and (d["Y0"] < 0).any():
-        raise ValueError(tr("sqrt needs all values ≥ 0.", "sqrt এর জন্য সব মান ≥ 0 হতে হবে।"))
-    if tf == "arcsine (%)" and ((d["Y0"] < 0) | (d["Y0"] > 100)).any():
-        raise ValueError(tr("arcsine needs values between 0 and 100.", "arcsine এর জন্য মান ০–১০০ এর মধ্যে হতে হবে।"))
-    d["Y"] = TRANSFORMS[tf](d["Y0"])
-    order = list(dict.fromkeys(d["TRT"]))
-    k, nrep = len(order), d["REP"].nunique()
-    if k < 2 or nrep < 2:
-        raise ValueError(tr("Need ≥ 2 treatments and ≥ 2 replications.", "কমপক্ষে ২টি ট্রিটমেন্ট ও ২টি রেপ্লিকেশন লাগবে।"))
-
-    model = ols("Y ~ C(REP) + C(TRT)", data=d).fit()
-    a = sm.stats.anova_lm(model, typ=1)
-    dfe = a.loc["Residual", "df"]
-    if dfe <= 0:
-        raise ValueError(tr("No error degrees of freedom – add more data.", "Error DF নেই – আরও ডেটা দিন।"))
-    mse = a.loc["Residual", "sum_sq"] / dfe
-
-    tbl = a.rename(index={"C(REP)": "Replication", "C(TRT)": "Treatment", "Residual": "Error"},
-                   columns={"sum_sq": "SS", "mean_sq": "MS", "PR(>F)": "P"})
-    tbl.loc["Total"] = [tbl["df"].sum(), tbl["SS"].sum(), np.nan, np.nan, np.nan]
-    anova = pd.DataFrame({
-        "Source": tbl.index, "DF": tbl["df"].astype(int).values,
-        "SS": tbl["SS"].round(3).values, "MS": tbl["MS"].round(3).values,
-        "F": tbl["F"].round(3).values, "P-value": tbl["P"].round(4).values,
-        "Sig.": [sig_stars(p, alpha) for p in tbl["P"]],
-    }).fillna("")
-
-    cnt = d.groupby("TRT").size().reindex(order)
-    r = k / np.sum(1 / cnt)
-    mean_t = d.groupby("TRT")["Y"].mean().reindex(order)
-    mean_o = d.groupby("TRT")["Y0"].mean().reindex(order)
-    sd = d.groupby("TRT")["Y"].std().reindex(order)
-    crit = make_crit(method, alpha, mse, dfe, r, k)
-    se_pool = np.sqrt(mse / r)
-    letters = letter_groups(mean_t.values, crit)
-    means = pd.DataFrame({"Treatment": order, "Mean": mean_t.values.round(3),
-                          "SD": sd.values.round(3), "SE": round(se_pool, 3),
-                          "Group": letters})
+def mean_family(d, fit, family, err_key, label, method, alpha, tf, comparable=True):
+    combos, mu = ls_means(d, fit, family)
+    names = [" × ".join(c) for c in combos]
+    keycol = d[list(family)].agg(" × ".join, axis=1) if len(family) > 1 else d[family[0]]
+    grp = d.assign(_k=keycol).groupby("_k", sort=False)
+    cnt = grp.size().reindex(names)
+    k = len(names)
+    r = k / np.sum(1.0 / cnt.to_numpy(float))
+    ms_e, df_e = fit["E"][err_key]
+    se = float(np.sqrt(ms_e / r))
+    sd = grp["Y"].std().reindex(names).to_numpy(float)
+    mo = grp["Y0"].mean().reindex(names).to_numpy(float)
+    crit = make_crit(method, alpha, ms_e, df_e, r, k)
+    letters = letter_groups(mu, crit) if comparable and k >= 2 else ["—"] * k
+    t = pd.DataFrame({label: names, "Rep (r)": cnt.to_numpy(int), "LS-Mean": mu.round(3), "SD": np.round(sd, 3),
+                      "SE": round(se, 3), "Group": letters})
     if tf != "None":
-        means.insert(2, "Mean (original)", mean_o.values.round(3))
+        t.insert(2, "Orig. Mean", mo.round(3))
 
     pair = None
-    if method in ("Tukey HSD", "LSD"):
+    if comparable and method in ("Tukey HSD", "LSD", "Bonferroni") and k >= 2:
+        m_pairs = k * (k - 1) / 2
         rows = []
-        for u, v in itertools.combinations(order, 2):
-            diff = mean_t[u] - mean_t[v]
-            p = (stats.studentized_range.sf(abs(diff) / se_pool, k, dfe) if method == "Tukey HSD"
-                 else 2 * stats.t.sf(abs(diff) / (np.sqrt(2) * se_pool), dfe))
-            rows.append({"Comparison": f"{u} vs {v}", "Difference": round(diff, 3),
-                         "P (adj.)" if method == "Tukey HSD" else "P": round(p, 4),
+        for (iu, u), (iv, v) in itertools.combinations(enumerate(names), 2):
+            diff = mu[iu] - mu[iv]
+            if method == "Tukey HSD":
+                p, pname = float(stats.studentized_range.sf(abs(diff) / se, k, df_e)), "P (Tukey adj.)"
+            else:
+                p = float(2 * stats.t.sf(abs(diff) / (np.sqrt(2) * se), df_e))
+                pname = "P"
+                if method == "Bonferroni":
+                    p, pname = min(1.0, p * m_pairs), "P (Bonferroni adj.)"
+            rows.append({"Contrast": f"{u} vs {v}", "Difference": round(diff, 3), pname: round(p, 4),
                          "Significant": "Yes" if p < alpha else "No"})
         pair = pd.DataFrame(rows)
+    return dict(label=label, family=family, table=t, pair=pair, se=se, r=r, k=k, ms_e=ms_e, df_e=df_e,
+                cd=crit(2) if comparable else np.nan, comparable=comparable, err_key=err_key, mu=mu, names=names)
 
-    resid, fitted = model.resid, model.fittedvalues
-    sh = stats.shapiro(resid) if len(resid) >= 3 else (np.nan, np.nan)
+# ───────────────────────── Diagnostics & Assumption Checks ─────────────────────────
+def assumption_tests(d, fit, design):
+    resid = fit["resid"]
+    sh = stats.shapiro(resid) if 3 <= len(resid) <= 5000 else (np.nan, np.nan)
+    grp_cols = ["A", "B"] if DESIGNS[design]["two_factor"] else ["A"]
     try:
-        lev = stats.levene(*[g["Y"].values for _, g in d.groupby("TRT") if len(g) > 1])
+        groups = [g["Y"].to_numpy() for _, g in d.groupby(grp_cols) if len(g) > 1]
+        lev = stats.levene(*groups, center="median") if len(groups) >= 2 else (np.nan, np.nan)
     except Exception:
         lev = (np.nan, np.nan)
+    return sh, lev
 
-    ms_rep = a.loc["C(REP)", "mean_sq"]
-    re_cv = ((nrep - 1) * ms_rep + nrep * (k - 1) * mse) / ((nrep * k - 1) * mse)
-    return dict(
-        data=d, order=order, k=k, nrep=nrep, anova=anova, means=means, pair=pair,
-        mse=mse, dfe=dfe, cv=np.sqrt(mse) / d["Y"].mean() * 100, grand=d["Y"].mean(),
-        r2=model.rsquared, se_pool=se_pool, sem=se_pool, cd=crit(2), cd01=make_crit(method, 0.01, mse, dfe, r, k)(2),
-        f_trt=a.loc["C(TRT)", "F"], p_trt=a.loc["C(TRT)", "PR(>F)"],
-        f_rep=a.loc["C(REP)", "F"], p_rep=a.loc["C(REP)", "PR(>F)"],
-        sh=sh, lev=lev, resid=resid, fitted=fitted, re=re_cv, counts=cnt,
-        y=y, trt=trt, tf=tf, alpha=alpha, method=method,
-    )
+def studentized(fit):
+    h = np.clip(fit["hat"], 0, 0.999999)
+    e, dfe, rss = fit["resid"], fit["dfe"], fit["rss"]
+    if dfe <= 1:
+        return np.full(len(e), np.nan)
+    s2_i = (rss - e ** 2 / (1 - h)) / (dfe - 1)
+    return e / np.sqrt(np.clip(s2_i, 1e-300, None) * (1 - h))
 
+# ───────────────────────── Multi-Design Demo Data Generator ─────────────────────────
+def generate_sample_dataset(design):
+    rng = np.random.default_rng(101)
+    if design == "CRD":
+        trts = ["Control", "Biochar 5 t/ha", "Biochar 10 t/ha", "Biochar 15 t/ha"]
+        rows = []
+        for t, base in zip(trts, [40, 48, 54, 51]):
+            for _ in range(5):
+                rows.append({"Treatment": t, "Grain_Yield": round(base + rng.normal(0, 2.2), 2),
+                             "Biomass": round(base * 2.1 + rng.normal(0, 3.5), 2)})
+        return pd.DataFrame(rows)
+    elif design == "RCBD":
+        trts = ["T0 (0 mM)", "T1 (50 mM)", "T2 (100 mM)", "T3 (150 mM)", "T4 (200 mM)"]
+        rows = []
+        for r in range(4):
+            blk = rng.normal(0, 1.2)
+            for t, base in zip(trts, [45, 41, 35, 27, 20]):
+                rows.append({"Replication": f"R{r+1}", "Salinity": t,
+                             "Grain_Yield": round(base + blk + rng.normal(0, 1.0), 2),
+                             "Plant_Height": round(base * 1.8 + blk + rng.normal(0, 1.5), 2)})
+        return pd.DataFrame(rows)
+    elif design == "FACT":
+        irr = ["I0 (Dry)", "I1 (Moderate)", "I2 (Adequate)"]
+        nit = ["N0", "N60", "N120"]
+        rows = []
+        for r in range(3):
+            blk = rng.normal(0, 1.0)
+            for i, base_i in zip(irr, [30, 42, 50]):
+                for n, base_n in zip(nit, [0, 8, 14]):
+                    rows.append({"Block": f"B{r+1}", "Irrigation": i, "Nitrogen": n,
+                                 "Yield_t_ha": round(base_i + base_n + blk + rng.normal(0, 1.1), 2)})
+        return pd.DataFrame(rows)
+    else:  # SPLIT
+        main_plots = ["Tillage_Zero", "Tillage_Conv", "Tillage_Deep"]
+        sub_plots = ["Var_A (Saline)", "Var_B (Local)", "Var_C (Hybrid)"]
+        rows = []
+        for r in range(3):
+            for mp, bmp in zip(main_plots, [32, 40, 43]):
+                err_a = rng.normal(0, 1.5)
+                for sp, bsp in zip(sub_plots, [8, 2, 12]):
+                    err_b = rng.normal(0, 0.9)
+                    rows.append({"Rep": f"R{r+1}", "MainPlot_Tillage": mp, "SubPlot_Variety": sp,
+                                 "Root_Length": round(bmp + bsp + err_a + err_b, 2),
+                                 "Grain_Yield": round((bmp + bsp) * 0.8 + err_a + err_b, 2)})
+        return pd.DataFrame(rows)
 
-def interpret(r):
-    sig = r["p_trt"] < r["alpha"]
-    m = r["means"].sort_values("Mean", ascending=False)
-    best, worst = m.iloc[0], m.iloc[-1]
-    prec = ("good", "ভালো") if r["cv"] <= 10 else ("acceptable", "গ্রহণযোগ্য") if r["cv"] <= 15 else ("high (interpret with care)", "বেশি (সতর্কতার সাথে ব্যাখ্যা করুন)")
-    if BN:
-        s = (f"{r['y']} এর উপর {r['trt']} এর প্রভাব {'পরিসংখ্যানগতভাবে তাৎপর্যপূর্ণ' if sig else 'তাৎপর্যপূর্ণ নয়'} "
-             f"(F = {r['f_trt']:.2f}, p = {r['p_trt']:.4f})। ")
-        if sig:
-            s += f"সর্বোচ্চ গড় ({best['Mean']}) পাওয়া গেছে '{best['Treatment']}' এ এবং সর্বনিম্ন ({worst['Mean']}) '{worst['Treatment']}' এ। "
-        s += f"CV = {r['cv']:.2f}% – পরীক্ষণের নির্ভুলতা {prec[1]}।"
-    else:
-        s = (f"The effect of {r['trt']} on {r['y']} was {'statistically significant' if sig else 'not significant'} "
-             f"(F = {r['f_trt']:.2f}, p = {r['p_trt']:.4f}). ")
-        if sig:
-            s += f"The highest mean ({best['Mean']}) was recorded for '{best['Treatment']}' and the lowest ({worst['Mean']}) for '{worst['Treatment']}'. "
-        s += f"CV = {r['cv']:.2f}%, indicating {prec[0]} experimental precision."
-    return s
+# ───────────────────────── Publication Plot Generator (Prism Inspired) ─────────────────────────
+PALETTES = {
+    "Steel Blue": ["#3b82f6", "#1d4ed8", "#60a5fa", "#93c5fd"],
+    "Forest Emerald": ["#059669", "#047857", "#10b981", "#6ee7b7"],
+    "Academic Slate": ["#475569", "#334155", "#64748b", "#94a3b8"],
+    "Okabe-Ito (Colorblind-Safe)": ["#0072B2", "#E69F00", "#009E73", "#D55E00", "#CC79A7", "#56B4E9"]
+}
 
+def render_publication_plot(family_res, response_name, palette_name, show_letters=True):
+    tbl = family_res["table"]
+    names = tbl[family_res["label"]].tolist()
+    means = tbl["LS-Mean"].to_numpy()
+    ses = tbl["SE"].to_numpy()
+    groups = tbl["Group"].tolist()
 
-def methods_text(r):
-    tf_note = "" if r["tf"] == "None" else " after " + r["tf"] + " transformation"
-    return (f"Data were analysed as a randomized complete block design (RCBD) with {r['k']} treatments and "
-            f"{r['nrep']} replications using two-way ANOVA{tf_note}. "
-            f"Treatment means were compared using {r['method']} at α = {r['alpha']}. Means followed by the same "
-            f"letter(s) are not significantly different. Analysis was performed in Python (statsmodels, SciPy).")
+    x = np.arange(len(names))
+    colors = PALETTES[palette_name]
+    bar_colors = [colors[i % len(colors)] for i in range(len(names))]
 
+    fig, ax = plt.subplots(figsize=(max(5.5, 0.95 * len(names) + 1.8), 4.8), dpi=300)
+    bars = ax.bar(x, means, yerr=ses, capsize=4.5, color=bar_colors, edgecolor="#0f172a",
+                  linewidth=1.1, alpha=0.9, width=0.52, error_kw={"elinewidth": 1.1, "ecolor": "#0f172a"})
 
-# ───────────────────────── Plot ─────────────────────────
-OKABE = ["#0072B2", "#E69F00", "#009E73", "#D55E00", "#CC79A7", "#56B4E9", "#F0E442", "#999999"]
-PALETTES = {"Steel blue": "#4A708B", "Forest green": "#2E7D32", "Earth brown": "#8D6E63",
-            "Colorblind-safe (per bar)": None}
-
-
-def make_plot(r, ylabel, xlabel, palette, show_letters, sort_bars):
-    m = r["means"].copy()
-    if sort_bars:
-        m = m.sort_values("Mean", ascending=False)
-    x = np.arange(len(m))
-    colors = PALETTES[palette] or [OKABE[i % len(OKABE)] for i in range(len(m))]
-    fig, ax = plt.subplots(figsize=(max(6, 1.1 * len(m) + 2), 5), dpi=300)
-    ax.bar(x, m["Mean"], yerr=m["SE"], capsize=5, color=colors, edgecolor="black",
-           linewidth=1.1, alpha=.9, width=.55, error_kw={"elinewidth": 1.2})
-    top = (m["Mean"] + m["SE"]).max()
+    top = (means + ses).max()
     if show_letters:
-        for xi, mu, se, g in zip(x, m["Mean"], m["SE"], m["Group"]):
-            ax.text(xi, mu + se + top * .02, g, ha="center", va="bottom", fontsize=12, fontweight="bold")
+        for xi, mu, se, g in zip(x, means, ses, groups):
+            if g and g != "—":
+                ax.text(xi, mu + se + top * 0.025, g, ha="center", va="bottom",
+                        fontsize=11, fontweight="bold", fontfamily="Times New Roman")
+
     ax.set_xticks(x)
-    ax.set_xticklabels(m["Treatment"], rotation=20, ha="right", fontsize=10, fontweight="bold")
-    ax.set_ylabel(ylabel, fontsize=11, fontweight="bold")
-    ax.set_xlabel(xlabel, fontsize=11, fontweight="bold")
-    ax.set_ylim(min(0, (m["Mean"] - m["SE"]).min() * 1.1), top * 1.2)
-    for s in ("top", "right"):
-        ax.spines[s].set_visible(False)
-    ax.grid(axis="y", linestyle="--", alpha=.3)
+    ax.set_xticklabels(names, rotation=22, ha="right", fontsize=9.5, fontweight="bold")
+    ax.set_ylabel(f"{response_name} (LS-Mean ± SE)", fontsize=10.5, fontweight="bold")
+    ax.set_xlabel(family_res["label"], fontsize=10.5, fontweight="bold")
+    ax.set_ylim(0, top * 1.20)
+
+    # Scientific Clean Borders
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.spines["left"].set_linewidth(1.1)
+    ax.spines["bottom"].set_linewidth(1.1)
+    ax.grid(axis="y", linestyle="--", alpha=0.3, color="#94a3b8")
     fig.tight_layout()
     return fig
 
-
-def fig_bytes(fig, fmt):
-    b = io.BytesIO()
-    fig.savefig(b, format=fmt, dpi=300, bbox_inches="tight")
-    return b.getvalue()
-
-
-# ───────────────────────── Export ─────────────────────────
-def to_excel(r, raw):
-    b = io.BytesIO()
-    with pd.ExcelWriter(b, engine="openpyxl") as w:
-        raw.to_excel(w, sheet_name="Data", index=False)
-        r["anova"].to_excel(w, sheet_name="ANOVA", index=False)
-        r["means"].to_excel(w, sheet_name="Means", index=False)
-        if r["pair"] is not None:
-            r["pair"].to_excel(w, sheet_name="Pairwise", index=False)
-        pd.DataFrame({"Statistic": ["CV %", "Grand mean", "R²", "SEm±", f"CD ({r['method']}, 5%)",
-                                    "Shapiro-Wilk p", "Levene p", "RCBD efficiency"],
-                      "Value": [r["cv"], r["grand"], r["r2"], r["sem"], r["cd"],
-                                r["sh"][1], r["lev"][1], r["re"]]}).round(4).to_excel(
-            w, sheet_name="Summary", index=False)
-    return b.getvalue()
-
-
-def to_word(r, fig):
-    try:
-        from docx import Document
-        from docx.shared import Inches
-    except ImportError:
-        return None
-    doc = Document()
-    doc.add_heading(f"RCBD Analysis – {r['y']}", 1)
-    doc.add_heading("Materials and Methods", 2)
-    doc.add_paragraph(methods_text(r))
-
-    def add_table(df):
-        t = doc.add_table(rows=1, cols=len(df.columns))
-        t.style = "Table Grid"
-        for i, c in enumerate(df.columns):
-            t.rows[0].cells[i].text = str(c)
-        for _, row in df.iterrows():
-            cells = t.add_row().cells
-            for i, v in enumerate(row):
-                cells[i].text = str(v)
-
-    doc.add_heading("ANOVA", 2)
-    add_table(r["anova"])
-    doc.add_paragraph(f"CV = {r['cv']:.2f}% | SEm± = {r['sem']:.3f} | CD ({r['alpha']}) = {r['cd']:.3f} | R² = {r['r2']:.3f}")
-    doc.add_heading("Treatment means", 2)
-    add_table(r["means"])
-    doc.add_heading("Figure", 2)
-    doc.add_picture(io.BytesIO(fig_bytes(fig, "png")), width=Inches(5.8))
-    doc.add_heading("Interpretation", 2)
-    doc.add_paragraph(interpret(r))
-    b = io.BytesIO()
-    doc.save(b)
-    return b.getvalue()
-
-
-# ───────────────────────── Data helpers ─────────────────────────
-def demo():
-    rng = np.random.default_rng(42)
-    trts = ["T0 (Control)", "T1 (50 mM NaCl)", "T2 (100 mM NaCl)", "T3 (150 mM NaCl)", "T4 (200 mM NaCl)"]
-    rows = []
-    for ri in range(4):
-        blk = rng.normal(0, 1.2)
-        for t, by, bh in zip(trts, [42, 37, 30, 24, 18], [88, 82, 75, 68, 60]):
-            rows.append({"Replication": f"R{ri + 1}", "Treatment": t,
-                         "Grain_Yield_g": round(by + blk + rng.normal(0, 1), 1),
-                         "Plant_Height_cm": round(bh + blk + rng.normal(0, 1.5), 1)})
-    return pd.DataFrame(rows)
-
-
-def guess(cols, keys, default):
-    for c in cols:
-        if any(k in str(c).lower() for k in keys):
-            return c
-    return default
-
-
-# ───────────────────────── Professional Hero Title ─────────────────────────
-badge_label = tr("RESEARCH STATISTICAL ENGINE", "বায়োমেট্রিক রিসার্চ ইঞ্জিন")
-hero_subtitle = tr("RCBD Field Trial & Advanced Biometric Analytics", "আরসিবিডি ফিল্ড ট্রায়াল ও বায়োমেট্রিক অ্যানালিটিক্স প্ল্যাটফর্ম")
-hero_caption = tr("Two-Way ANOVA • Post-hoc Grouping • Assumption Diagnostics • Publication Graphics",
-                  "টু-ওয়ে অ্যানোভা • পোস্ট-হক লেটার গ্রুপিং • মডেল ডায়াগনস্টিকস • হাই-রেজ্যুলেশন গ্রাফিক্স")
-
+# ───────────────────────── Executive Header ─────────────────────────
 st.markdown(f"""
-<div style="padding: 12px 0px 24px 0px;">
-    <span style="font-size: 0.75rem; font-weight: 700; letter-spacing: 2.5px; text-transform: uppercase; 
-                 background: rgba(56, 189, 248, 0.12); color: #38bdf8; padding: 6px 14px; 
-                 border-radius: 30px; border: 1px solid rgba(56, 189, 248, 0.3);">
-        {badge_label}
-    </span>
-    <h1 style="font-size: 2.7rem; font-weight: 800; margin: 14px 0 6px 0; letter-spacing: -0.5px; line-height: 1.15; font-family: 'Times New Roman', serif;">
-        AgriStat <span style="background: linear-gradient(135deg, #38bdf8 0%, #818cf8 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">Pro</span>
-    </h1>
-    <p style="font-size: 1.15rem; font-weight: 400; opacity: 0.88; margin: 0; font-family: 'Times New Roman', 'Kalpurush', serif;">
-        {hero_subtitle}
-    </p>
-    <p style="font-size: 0.86rem; opacity: 0.65; margin-top: 6px; letter-spacing: 0.3px;">
-        {hero_caption}
-    </p>
+<div style="padding: 6px 0 16px 0; border-bottom: 1px solid #e2e8f0; margin-bottom: 20px;">
+    <div style="display: flex; justify-content: space-between; align-items: baseline;">
+        <div>
+            <span style="font-size: 0.72rem; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; 
+                         background: #0ea5e914; color: #0284c7; padding: 4px 10px; border-radius: 20px; border: 1px solid #0ea5e933;">
+                {tr("ENTERPRISE BIOMETRIC SUITE", "বায়োমেট্রিক রিসার্চ ইঞ্জিন")}
+            </span>
+            <h1 style="font-size: 2.3rem; font-weight: 800; margin: 8px 0 2px 0; color: #0f172a; letter-spacing: -0.5px;">
+                AgriStat <span style="color: #0284c7;">Studio</span>
+            </h1>
+            <p style="font-size: 0.95rem; color: #475569; margin: 0;">
+                {tr("Design-Aware General Linear Modeling • Multi-Comparison Tests • SAS-Grade Variance Decomposition", 
+                    "ডিজাইন-সচেতন লিনিয়ার মডেলিং • মাল্টিপল রেঞ্জ টেস্ট • এসএএস-গ্রেড ভ্যারিয়েন্স পার্টিশন")}
+            </p>
+        </div>
+    </div>
 </div>
 """, unsafe_allow_html=True)
 
+# ───────────────────────── Sidebar Navigation ─────────────────────────
+st.sidebar.markdown(f"### ⚙️ {tr('1. Experimental Setup', '১. পরীক্ষণ নকশা')}")
+design_key = st.sidebar.selectbox(
+    tr("Design Architecture", "নকশা নির্বাচন"),
+    list(DESIGNS.keys()),
+    format_func=lambda k: DESIGNS[k]["label"]
+)
+spec = DESIGNS[design_key]
 
-# ───────────────────────── Sidebar Data ─────────────────────────
-st.sidebar.header(tr("1. Data Input", "১. ডেটা ইনপুট"))
-src = st.sidebar.radio(tr("Source", "সোর্স"), (tr("Editable sheet", "এডিটেবল শীট"), tr("Upload file", "ফাইল আপলোড"),
-                                               tr("Demo data", "ডেমো ডেটা")))
-df = None
-if src == tr("Editable sheet", "এডিটেবল শীট"):
-    st.info(tr("💡 Double-click a cell to edit; use the bottom row to add data.",
-               "💡 সেলে ডাবল-ক্লিক করে এডিট করুন; নিচের সারিতে নতুন ডেটা যোগ করুন।"))
-    df = st.data_editor(demo(), num_rows="dynamic", use_container_width=True, key="editor")
-elif src == tr("Upload file", "ফাইল আপলোড"):
-    up = st.sidebar.file_uploader(".csv / .xlsx", type=["csv", "xlsx"])
+st.sidebar.markdown(f"### 📁 {tr('2. Data Source', '২. ডেটা সোর্স')}")
+source_mode = st.sidebar.radio(
+    tr("Data Input Mode", "ইনপুট মোড"),
+    (tr("Interactive Grid", "ইন্টারেক্টিভ গ্রিড"), tr("File Upload", "ফাইল আপলোড"), tr("Load Standard Sample", "নমুনা ডেটাসেট"))
+)
+
+raw_df = None
+if source_mode == tr("Interactive Grid", "ইন্টারেক্টিভ গ্রিড"):
+    st.info(tr("💡 Directly edit cells below or append observations at the bottom.",
+               "💡 গ্রিডের সেলে ক্লিক করে এডিট করুন অথবা নিচে নতুন সারি যুক্ত করুন।"))
+    raw_df = st.data_editor(generate_sample_dataset(design_key), num_rows="dynamic", use_container_width=True, key=f"grid_{design_key}")
+elif source_mode == tr("File Upload", "ফাইল আপলোড"):
+    up = st.sidebar.file_uploader(tr("Upload Spreadsheet (.csv, .xlsx)", "স্প্রেডশীট আপলোড"), type=["csv", "xlsx"])
     if up is not None:
         try:
-            if up.name.lower().endswith(".csv"):
-                df = pd.read_csv(up)
-            else:
-                xl = pd.ExcelFile(up)
-                sheet = st.sidebar.selectbox("Sheet", xl.sheet_names) if len(xl.sheet_names) > 1 else xl.sheet_names[0]
-                df = xl.parse(sheet)
-            with st.expander(tr("Preview", "প্রিভিউ"), expanded=False):
-                st.dataframe(df.head(20), use_container_width=True)
-        except Exception as e:
-            st.error(f"{tr('Could not read file', 'ফাইল পড়া যায়নি')}: {e}")
-    st.sidebar.download_button(tr("⬇️ Template CSV", "⬇️ টেমপ্লেট CSV"), demo().to_csv(index=False),
-                               "rcbd_template.csv", "text/csv")
+            raw_df = pd.read_csv(up) if up.name.endswith(".csv") else pd.read_excel(up)
+            st.dataframe(raw_df.head(10), use_container_width=True)
+        except Exception as ex:
+            st.error(f"File Parsing Error: {ex}")
+    else:
+        st.info(tr("Upload your trial spreadsheet to commence analysis.", "বিশ্লেষণ শুরু করতে ফাইল আপলোড করুন।"))
 else:
-    df = demo()
-    with st.expander(tr("Demo dataset", "ডেমো ডেটাসেট"), expanded=True):
-        st.dataframe(df, use_container_width=True)
+    raw_df = generate_sample_dataset(design_key)
+    with st.expander(tr("Inspect Active Sample", "নমুনা ডেটাসেট প্রিভিউ"), expanded=False):
+        st.dataframe(raw_df, use_container_width=True)
 
-if df is None or df.dropna(how="all").empty:
-    st.info(tr("👈 Provide data to begin.", "👈 শুরু করতে ডেটা দিন।"))
+if raw_df is None or raw_df.dropna(how="all").empty:
     st.stop()
 
-cols = list(df.columns)
-st.sidebar.header(tr("2. Variables", "২. ভ্যারিয়েবল"))
-trt_c = guess(cols, ["treat", "trt", "geno", "variet", "cultivar"], cols[min(1, len(cols) - 1)])
-rep_c = guess(cols, ["rep", "block", "blk"], cols[0])
-trt = st.sidebar.selectbox(tr("Treatment column", "ট্রিটমেন্ট কলাম"), cols, index=cols.index(trt_c))
-rep = st.sidebar.selectbox(tr("Replication / block column", "রেপ্লিকেশন / ব্লক কলাম"), cols, index=cols.index(rep_c))
-num_cols = [c for c in df.select_dtypes(include=[np.number]).columns if c not in (trt, rep)]
-if not num_cols or trt == rep:
-    st.error(tr("Select different treatment/replication columns and ensure a numeric response exists.",
-                "আলাদা ট্রিটমেন্ট/রেপ্লিকেশন কলাম নির্বাচন করুন এবং একটি সংখ্যাভিত্তিক রেসপন্স রাখুন।"))
+# ───────────────────────── Factor & Column Mapping ─────────────────────────
+st.sidebar.markdown(f"### 🎯 {tr('3. Variable Mapping', '৩. ফ্যাক্টর ও ভ্যারিয়েবল')}")
+cols_list = list(raw_df.columns)
+
+col_map = {}
+if spec["needs_rep"]:
+    rep_default = [c for c in cols_list if any(k in c.lower() for k in ["rep", "block", "blk"])]
+    col_map["rep"] = st.sidebar.selectbox(tr("Block / Replication (Rep)", "ব্লক / রেপ্লিকেশন"), cols_list,
+                                          index=cols_list.index(rep_default[0]) if rep_default else 0)
+
+trt_a_default = [c for c in cols_list if any(k in c.lower() for k in ["treat", "trt", "salin", "till", "geno", "a"])]
+col_map["a"] = st.sidebar.selectbox(
+    tr("Treatment A (Main-Plot)" if spec["two_factor"] else "Treatment Factor", "ট্রিটমেন্ট ফ্যাক্টর (বা মেইন-প্লট)"),
+    cols_list, index=cols_list.index(trt_a_default[0]) if trt_a_default else min(1, len(cols_list)-1)
+)
+
+if spec["two_factor"]:
+    rem_cols = [c for c in cols_list if c not in [col_map.get("rep"), col_map["a"]]]
+    col_map["b"] = st.sidebar.selectbox(tr("Factor B (Sub-Plot)", "ফ্যাক্টর B (সাব-প্লট)"), rem_cols if rem_cols else cols_list)
+
+numeric_candidates = [c for c in raw_df.select_dtypes(include=[np.number]).columns if c not in col_map.values()]
+if not numeric_candidates:
+    st.error(tr("No continuous response variable detected.", "কোনো সংখ্যাভিত্তিক রেসপন্স ভ্যারিয়েবল পাওয়া যায়নি।"))
     st.stop()
-resp = st.sidebar.selectbox(tr("Response variable", "রেসপন্স ভ্যারিয়েবল"), num_cols)
 
-st.sidebar.header(tr("3. Settings", "৩. সেটিংস"))
-method = st.sidebar.selectbox(tr("Mean comparison", "গড় তুলনা"), METHODS)
-alpha = st.sidebar.selectbox(tr("Significance level (α)", "তাৎপর্য স্তর (α)"), [0.05, 0.01, 0.10])
-tf = st.sidebar.selectbox(tr("Data transformation", "ডেটা ট্রান্সফরমেশন"), list(TRANSFORMS))
+response_var = st.sidebar.selectbox(tr("Response Metric (Y)", "রেসপন্স ভ্যারিয়েবল (Y)"), numeric_candidates)
 
-# ───────────────────────── Developer Profile (No GitHub Mention) ─────────────────────────
+# ───────────────────────── Statistical Engine Controls ─────────────────────────
+st.sidebar.markdown(f"### ⚙️ {tr('4. Model Parameters', '৪. মডেল ও টেস্ট সেটিংস')}")
+comp_method = st.sidebar.selectbox(tr("Mean Separation", "গড় পৃথকীকরণ পরীক্ষা"), METHODS, index=0)
+alpha_level = st.sidebar.selectbox(tr("Significance Threshold (α)", "তাৎপর্য স্তর (α)"), [0.05, 0.01, 0.001], index=0)
+ss_type = st.sidebar.selectbox(tr("Sum of Squares Type", "সাম অব স্কয়ার্স টাইপ"), ["III", "I"],
+                               format_func=lambda s: f"Type {s} ({'Partial / Orthogonal' if s=='III' else 'Sequential'})")
+data_transform = st.sidebar.selectbox(tr("Mathematical Transformation", "ট্রান্সফরমেশন"), list(TRANSFORMS.keys()))
+auto_avg = st.sidebar.checkbox(tr("Average Subsampling / Duplicates", "সাব-স্যাম্পল গড় করুন"), value=False)
+
+# Developer Credit (Corporate Bio)
 st.sidebar.markdown("---")
-with st.sidebar.expander(f"👨‍💻 {tr('Developer Profile', 'ডেভেলপার পরিচিতি')}", expanded=True):
+with st.sidebar.expander(f"👨‍💻 {tr('Scientific Developer', 'ডেভেলপার পরিচিতি')}", expanded=False):
     st.markdown(f"""
     **Md. Akib Rubayiet Tahmid**  
-    *{tr('Undergraduate Agricultural Researcher', 'কৃষি গবেষক')}*  
+    *{tr('Biometrics & Agricultural Research Specialist', 'বায়োমেট্রিক্স ও এগ্রিকালচারাল রিসার্চ স্পেশালিস্ট')}*  
     
     [![LinkedIn](https://img.shields.io/badge/LinkedIn-Connect-0A66C2?style=flat&logo=linkedin&logoColor=white)](https://www.linkedin.com/in/akib-rubayiet-tahmid)
     """)
 
+# ───────────────────────── Model Fitting ─────────────────────────
+label_dict = {"REP": col_map.get("rep", "Block"), "A": col_map["a"], "B": col_map.get("b", "Factor_B")}
+
 try:
-    res = analyze(df, trt, rep, resp, tf, alpha, method)
+    clean_d, d_info = prepare(raw_df, design_key, col_map, response_var, data_transform, auto_avg)
+    model_fit = fit_model(clean_d, design_key, label_dict, ss_type)
+except AnalysisError as ae:
+    st.error(ae.bn if BN else ae.en)
+    st.stop()
 except Exception as e:
-    st.error(f"{tr('Analysis error', 'বিশ্লেষণে সমস্যা')}: {e}")
+    st.error(f"Computation Engine Exception: {e}")
     st.stop()
 
-if res["counts"].nunique() > 1 or len(res["data"]) != res["k"] * res["nrep"]:
-    st.warning(tr("⚠️ Design is unbalanced or has missing/duplicate cells; results use the harmonic-mean replication.",
-                  "⚠️ ডিজাইন ভারসাম্যহীন বা মিসিং/ডুপ্লিকেট আছে; হারমোনিক-মিন রেপ্লিকেশন ব্যবহার হয়েছে।"))
+# Mean Families
+A_lbl, B_lbl = label_dict["A"], label_dict.get("B", "B")
+if design_key in ("CRD", "RCBD"):
+    fam_specs = [(("A",), "RES", A_lbl, True)]
+elif design_key == "FACT":
+    fam_specs = [(("A",), "RES", A_lbl, True), (("B",), "RES", B_lbl, True), (("A", "B"), "RES", f"{A_lbl} × {B_lbl}", True)]
+else:  # SPLIT
+    fam_specs = [(("A",), SPLIT_ERR_A, A_lbl, True), (("B",), "RES", B_lbl, True), (("A", "B"), "RES", f"{A_lbl} × {B_lbl}", False)]
 
-st.subheader(f"📊 {resp}" + (f"  [{tf}]" if tf != "None" else ""))
-c = st.columns(5)
-c[0].metric("CV %", f"{res['cv']:.2f}")
-c[1].metric(tr("Grand mean", "সামগ্রিক গড়"), f"{res['grand']:.2f}")
-c[2].metric("R²", f"{res['r2']:.3f}")
-c[3].metric("SEm ±", f"{res['sem']:.3f}")
-c[4].metric(f"CD ({method.split()[0]}, {int(alpha * 100)}%)", f"{res['cd']:.3f}")
-if res["cv"] > 15:
-    st.warning(tr("⚠️ CV > 15% indicates high experimental variability.",
-                  "⚠️ CV 15% এর বেশি হলে এক্সপেরিমেন্টাল এরর বেশি বলে গণ্য হয়।"))
+families = [mean_family(clean_d, model_fit, fam, ek, lab, comp_method, alpha_level, data_transform, comp)
+            for fam, ek, lab, comp in fam_specs]
 
-t1, t2, t3, t4, t5 = st.tabs([tr("📋 Results", "📋 ফলাফল"), tr("🔍 Assumptions", "🔍 অনুমান যাচাই"),
-                              tr("📈 Plot", "📈 প্লট"), tr("🧮 All traits", "🧮 সব বৈশিষ্ট্য"),
-                              tr("💾 Export", "💾 এক্সপোর্ট")])
+sh_res, lev_res = assumption_tests(clean_d, model_fit, design_key)
+stud_resid = studentized(model_fit)
+grand_mean = clean_d["Y"].mean()
+cv_main = (np.sqrt(model_fit["mse"]) / grand_mean) * 100
 
-with t1:
-    st.markdown("#### " + tr("A. ANOVA (RCBD)", "ক. ANOVA (RCBD)"))
-    st.dataframe(res["anova"], use_container_width=True, hide_index=True)
-    st.caption(f"RCBD efficiency vs CRD: {res['re']:.2f}× " +
-               ("(blocking was effective)" if res["re"] > 1.1 else "(blocking gave little gain)"))
-    st.markdown(f"#### B. {method} – " + tr("Treatment means", "ট্রিটমেন্ট গড়"))
-    st.dataframe(res["means"], use_container_width=True, hide_index=True)
-    st.caption(tr("Means with the same letter are not significantly different.",
-                  "একই অক্ষরযুক্ত গড়গুলোর মধ্যে তাৎপর্যপূর্ণ পার্থক্য নেই।"))
-    if res["pair"] is not None:
-        with st.expander(tr("Pairwise comparisons", "জোড়ায় জোড়ায় তুলনা")):
-            st.dataframe(res["pair"], use_container_width=True, hide_index=True)
-    st.success(interpret(res))
-    st.markdown("**" + tr("Methods paragraph (copy to thesis)", "মেথডস অনুচ্ছেদ (থিসিসে কপি করুন)") + "**")
-    st.code(methods_text(res), language=None)
+# ───────────────────────── Performance KPI Bar ─────────────────────────
+kpi_cols = st.columns(5)
+kpi_cols[0].metric(tr("Grand Mean (Ȳ)", "সামগ্রিক গড়"), f"{grand_mean:.2f}")
+kpi_cols[1].metric(tr("CV % (Error b)", "সিভি %"), f"{cv_main:.2f}%")
+kpi_cols[2].metric(tr("Model R²", "মডেল R²"), f"{model_fit['r2']:.3f}")
+kpi_cols[3].metric(tr("Residual MS", "এরর মিন স্কয়ার"), f"{model_fit['mse']:.3f}")
 
-with t2:
-    sh_p, lev_p = res["sh"][1], res["lev"][1]
-    a1, a2 = st.columns(2)
-    a1.metric("Shapiro-Wilk p (" + tr("normality", "নর্মালিটি") + ")", "—" if pd.isna(sh_p) else f"{sh_p:.4f}")
-    a2.metric("Levene p (" + tr("equal variance", "সমান ভেরিয়েন্স") + ")", "—" if pd.isna(lev_p) else f"{lev_p:.4f}")
-    bad = [n for n, p in (("normality", sh_p), ("variance homogeneity", lev_p)) if not pd.isna(p) and p < 0.05]
-    if bad:
-        st.warning(tr(f"Assumption violated: {', '.join(bad)}. Try log10 / sqrt / arcsine transformation in the sidebar, "
-                      "or a non-parametric test.", "অনুমান ভঙ্গ হয়েছে। সাইডবার থেকে log10 / sqrt / arcsine ট্রান্সফরমেশন চেষ্টা করুন।"))
-    else:
-        st.success(tr("✅ Assumptions satisfied (small samples have low power – inspect plots too).",
-                      "✅ অনুমানগুলো পূরণ হয়েছে (ছোট নমুনায় টেস্টের ক্ষমতা কম – প্লটও দেখুন)।"))
-    fig2, (ax1, ax2) = plt.subplots(1, 2, figsize=(9, 3.6))
-    ax1.scatter(res["fitted"], res["resid"], color="#4A708B", edgecolor="k")
-    ax1.axhline(0, color="red", ls="--", lw=1)
-    ax1.set(xlabel="Fitted", ylabel="Residuals", title="Residuals vs Fitted")
-    sm.qqplot(res["resid"], line="s", ax=ax2)
-    ax2.set_title("Normal Q-Q")
-    fig2.tight_layout()
-    st.pyplot(fig2)
+if design_key == "SPLIT":
+    cv_a = (np.sqrt(model_fit["E"][SPLIT_ERR_A][0]) / grand_mean) * 100
+    kpi_cols[4].metric(tr("CV % (Error a)", "মেইন-প্লট সিভি %"), f"{cv_a:.2f}%")
+else:
+    kpi_cols[4].metric(tr("Design Efficiency", "ডিজাইন এফিসিয়েন্সি"), "Balanced" if d_info["balanced"] else "Unbalanced")
 
-with t3:
-    p1, p2, p3 = st.columns(3)
-    pal = p1.selectbox(tr("Color", "রং"), list(PALETTES))
-    show_l = p2.checkbox(tr("Show letters", "অক্ষর দেখান"), True)
-    sort_b = p3.checkbox(tr("Sort by mean", "গড় অনুযায়ী সাজান"), False)
-    q1, q2 = st.columns(2)
-    ylab = q1.text_input(tr("Y-axis label", "Y অক্ষ"), f"{resp} (Mean ± SE)")
-    xlab = q2.text_input(tr("X-axis label", "X অক্ষ"), trt)
-    fig = make_plot(res, ylab, xlab, pal, show_l, sort_b)
+# ───────────────────────── Tabbed Analytical Workspace ─────────────────────────
+tab_anova, tab_means, tab_plots, tab_diag, tab_batch, tab_rep = st.tabs([
+    tr("📊 ANOVA Partitioning", "📊 অ্যানোভা টেবিল"),
+    tr("📑 Mean Separation & Letters", "📑 গড় পৃথকীকরণ ও গ্রুপিং"),
+    tr("📈 Publication Graphics", "📈 পাবলিকেশন গ্রাফ"),
+    tr("🩺 Residual Diagnostics", "🩺 মডেল ডায়াগনস্টিকস"),
+    tr("🧮 Multi-Trait Batch", "🧮 মাল্টি-ট্রেইট সারাংশ"),
+    tr("📋 Thesis Methods & Export", "📋 রিপোর্ট ও এক্সপোর্ট")
+])
+
+# ── 1. ANOVA Tab ──
+with tab_anova:
+    st.markdown(f"#### {tr('Analysis of Variance Table (Two-Way/Factorial General Linear Model)', 'অ্যানালাইসিস অব ভ্যারিয়েন্স টেবিল')}")
+    anova_df = display_anova(model_fit["tbl"], alpha_level)
+    st.dataframe(anova_df, use_container_width=True, hide_index=True)
+
+    if design_key == "SPLIT":
+        st.info(tr("ℹ️ Note: Split-Plot models partition experimental error into Error (a) [Main-plot: Rep × A] and Error (b) [Sub-plot residual]. F-tests are automatically scaled against their respective error terms.",
+                   "ℹ️ জ্ঞাতব্য: স্প্লিট-প্লট মডেলে মেইন-প্লটের F-অনুপাত Error (a) এবং সাব-প্লটের F-অনুপাত Error (b) এর প্রেক্ষিতে হিসাব করা হয়েছে।"))
+
+    with st.expander(tr("Variance Explained & Effect Sizes (Partial η²)", "ভেরিয়েন্স ব্যাখ্যা ও পার্শিয়াল ইটা-স্কয়ার্ড")):
+        sig_effects = model_fit["tbl"].dropna(subset=["F"])
+        for _, r in sig_effects.iterrows():
+            if r["Source"] not in ["Total", "Error (a)", "Error (b)", "Residual Error"]:
+                pct = r["EtaP"] * 100 if not np.isnan(r["EtaP"]) else 0
+                st.write(f"• **{r['Source']}**: accounts for **{pct:.1f}%** of the partial variance (p = {fmt_p(r['P'])})")
+
+# ── 2. Mean Separation Tab ──
+with tab_means:
+    st.markdown(f"#### {tr(f'Least-Squares Means & Grouping via {comp_method} (α = {alpha_level})', f'গড় এবং {comp_method} গ্রুপিং')}")
+    target_fam = st.selectbox(tr("Select Factor Family", "ফ্যাক্টর নির্বাচন"), range(len(families)),
+                              format_func=lambda idx: families[idx]["label"])
+    active_fam = families[target_fam]
+    st.dataframe(active_fam["table"], use_container_width=True, hide_index=True)
+    st.caption(tr("Letters indicate statistical groupings: Means sharing the same letter do not differ significantly.",
+                  "একই অক্ষরযুক্ত গড়গুলোর মধ্যে পরিসংখ্যানগত কোনো তাৎপর্যপূর্ণ পার্থক্য নেই।"))
+
+    if active_fam["pair"] is not None:
+        with st.expander(tr("Pairwise Contrasts & Adjusted P-values", "জোড়ায় জোড়ায় তুলনা ও অ্যাডজাস্টেড পি-মান")):
+            st.dataframe(active_fam["pair"], use_container_width=True, hide_index=True)
+
+# ── 3. Publication Graphics Tab ──
+with tab_plots:
+    p_col1, p_col2, p_col3 = st.columns([1, 1, 1])
+    plt_fam_idx = p_col1.selectbox(tr("Plot Factor", "গ্রাফের ফ্যাক্টর"), range(len(families)),
+                                   format_func=lambda i: families[i]["label"], key="plt_fam")
+    plt_palette = p_col2.selectbox(tr("Color Scheme", "কালার প্যালেট"), list(PALETTES.keys()))
+    show_sig_letters = p_col3.checkbox(tr("Annotate Letter Groups", "অক্ষর গ্রুপিং লেবেল দেখান"), value=True)
+
+    fig = render_publication_plot(families[plt_fam_idx], response_var, plt_palette, show_sig_letters)
     st.pyplot(fig)
-    d1, d2 = st.columns(2)
-    d1.download_button("💾 PNG (300 DPI)", fig_bytes(fig, "png"), f"{resp}_RCBD.png", "image/png")
-    d2.download_button("💾 PDF (vector)", fig_bytes(fig, "pdf"), f"{resp}_RCBD.pdf", "application/pdf")
 
-with t4:
-    rows = []
-    for v in num_cols:
+    d_col1, d_col2 = st.columns(2)
+    buf_png = io.BytesIO()
+    fig.savefig(buf_png, format="png", dpi=300, bbox_inches="tight")
+    d_col1.download_button(tr("💾 Export 300 DPI PNG", "💾 ডাউনলোড 300 DPI PNG"), buf_png.getvalue(),
+                           f"{response_var}_{families[plt_fam_idx]['label']}.png", "image/png")
+
+    buf_pdf = io.BytesIO()
+    fig.savefig(buf_pdf, format="pdf", dpi=300, bbox_inches="tight")
+    d_col2.download_button(tr("📄 Export Vector PDF", "📄 ডাউনলোড ভেক্টর PDF"), buf_pdf.getvalue(),
+                           f"{response_var}_{families[plt_fam_idx]['label']}.pdf", "application/pdf")
+
+# ── 4. Diagnostics Tab ──
+with tab_diag:
+    st.markdown(f"#### {tr('Gauss-Markov & Normality Assumption Diagnostics', 'মডেল এজাম্পশন ও নর্মালিটি টেস্ট')}")
+    d_kpi1, d_kpi2 = st.columns(2)
+    sh_p = sh_res[1]
+    lev_p = lev_res[1]
+    d_kpi1.metric("Shapiro-Wilk (Residual Normality)", "—" if pd.isna(sh_p) else f"{sh_p:.4f}",
+                  delta="Normal" if sh_p > 0.05 else "Non-normal Violation", delta_color="normal" if sh_p > 0.05 else "inverse")
+    d_kpi2.metric("Levene Test (Variance Homogeneity)", "—" if pd.isna(lev_p) else f"{lev_p:.4f}",
+                  delta="Homoscedastic" if lev_p > 0.05 else "Heteroscedastic", delta_color="normal" if lev_p > 0.05 else "inverse")
+
+    fig_diag, (ax_d1, ax_d2) = plt.subplots(1, 2, figsize=(9.5, 4), dpi=300)
+    ax_d1.scatter(model_fit["fitted"], model_fit["resid"], color="#0284c7", edgecolor="#0f172a", alpha=0.8)
+    ax_d1.axhline(0, color="#ef4444", linestyle="--", linewidth=1.2)
+    ax_d1.set_xlabel("Fitted Values", fontweight="bold")
+    ax_d1.set_ylabel("Residuals", fontweight="bold")
+    ax_d1.set_title("Residuals vs Fitted (Homoscedasticity)", fontweight="bold")
+    ax_d1.spines["top"].set_visible(False)
+    ax_d1.spines["right"].set_visible(False)
+
+    # Q-Q plot via scipy
+    sorted_res = np.sort(model_fit["resid"])
+    theoretical_q = stats.norm.ppf(np.linspace(0.01, 0.99, len(sorted_res)))
+    ax_d2.scatter(theoretical_q, sorted_res, color="#0284c7", edgecolor="#0f172a", alpha=0.8)
+    ax_d2.plot(theoretical_q, theoretical_q * np.std(sorted_res) + np.mean(sorted_res), color="#ef4444", linestyle="--")
+    ax_d2.set_xlabel("Theoretical Quantiles", fontweight="bold")
+    ax_d2.set_ylabel("Sample Quantiles", fontweight="bold")
+    ax_d2.set_title("Normal Q-Q Plot", fontweight="bold")
+    ax_d2.spines["top"].set_visible(False)
+    ax_d2.spines["right"].set_visible(False)
+    fig_diag.tight_layout()
+    st.pyplot(fig_diag)
+
+    outliers_mask = np.abs(stud_resid) > 3.0
+    if np.any(outliers_mask):
+        st.warning(tr(f"⚠️ {np.sum(outliers_mask)} observation(s) exhibit studentized residuals |r| > 3.0 (Potential Outliers).",
+                      f"⚠️ {np.sum(outliers_mask)}টি সম্ভাব্য আউটলায়ার পাওয়া গেছে (|r| > 3.0)।"))
+        st.dataframe(clean_d[outliers_mask], use_container_width=True)
+
+# ── 5. Multi-Trait Summary Tab ──
+with tab_batch:
+    st.markdown(f"#### {tr('Batch Processing of All Numerical Traits', 'সব সংখ্যাভিত্তিক বৈশিষ্ট্যের এককালীন বিশ্লেষণ')}")
+    batch_rows = []
+    for num_v in numeric_candidates:
         try:
-            rv = analyze(df, trt, rep, v, "None", alpha, method)
-            top = rv["means"].sort_values("Mean", ascending=False).iloc[0]
-            rows.append({"Trait": v, "Grand mean": round(rv["grand"], 2), "F (trt)": round(rv["f_trt"], 2),
-                         "P-value": round(rv["p_trt"], 4), "Sig.": sig_stars(rv["p_trt"], alpha),
-                         "CV %": round(rv["cv"], 2), "Best treatment": top["Treatment"]})
+            d_sub, _ = prepare(raw_df, design_key, col_map, num_v, data_transform, auto_avg)
+            fit_sub = fit_model(d_sub, design_key, label_dict, ss_type)
+            tbl_sub = fit_sub["tbl"]
+            trt_term = ("A",)
+            f_val = tbl_sub.loc[tbl_sub["key"] == trt_term, "F"].values[0]
+            p_val = tbl_sub.loc[tbl_sub["key"] == trt_term, "P"].values[0]
+            batch_rows.append({
+                "Trait": num_v,
+                "Grand Mean": round(d_sub["Y"].mean(), 2),
+                f"F ({label_dict['A']})": round(f_val, 2),
+                "P-Value": fmt_p(p_val),
+                "Sig.": sig_stars(p_val, alpha_level),
+                "CV %": round((np.sqrt(fit_sub["mse"]) / d_sub["Y"].mean()) * 100, 2)
+            })
         except Exception:
-            rows.append({"Trait": v, "Sig.": "error"})
-    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
-    st.caption(tr("Quick overview of every numeric trait (no transformation).",
-                  "সব সংখ্যাভিত্তিক বৈশিষ্ট্যের দ্রুত সারাংশ (ট্রান্সফরমেশন ছাড়া)।"))
+            continue
+    if batch_rows:
+        st.dataframe(pd.DataFrame(batch_rows), use_container_width=True, hide_index=True)
 
-with t5:
-    e1, e2 = st.columns(2)
-    e1.download_button("📊 Excel (all tables)", to_excel(res, df), f"{resp}_RCBD_results.xlsx",
-                       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-    word = to_word(res, fig)
-    if word:
-        e2.download_button("📝 Word report", word, f"{resp}_RCBD_report.docx",
-                           "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
-    else:
-        e2.info(tr("Add `python-docx` to requirements.txt to enable Word export.",
-                   "Word এক্সপোর্টের জন্য requirements.txt এ `python-docx` যোগ করুন।"))
+# ── 6. Reporting & Export Tab ──
+with tab_rep:
+    st.markdown(f"#### {tr('Manuscript Materials & Methods Statement', 'থিসিস বা জার্নালের জন্য মেথডলজি ড্রাফট')}")
+    method_text = (
+        f"Data were analysed under a {DESIGNS[design_key]['label']} layout. "
+        f"Variance decomposition was evaluated via General Linear Model ({'Type III' if ss_type=='III' else 'Type I'} sum of squares) "
+        f"accounting for designated block and interaction error terms. "
+        f"Post-hoc pairwise mean separation was evaluated using {comp_method} at α = {alpha_level}. "
+        f"Model residuals were assessed for normality (Shapiro-Wilk) and homoscedasticity (Levene's test). "
+        f"Computations and matrix linear algebra were executed via AgriStat Studio."
+    )
+    st.code(method_text, language="markdown")
 
-# ───────────────────────── Clean Footer (Only Professional Identity) ─────────────────────────
+    excel_buf = io.BytesIO()
+    with pd.ExcelWriter(excel_buf, engine="openpyxl") as writer:
+        clean_d.to_excel(writer, sheet_name="Raw Data", index=False)
+        display_anova(model_fit["tbl"], alpha_level).to_excel(writer, sheet_name="ANOVA", index=False)
+        for f in families:
+            f["table"].to_excel(writer, sheet_name=f["label"][:30], index=False)
+
+    st.download_button(
+        label=tr("📊 Download Complete Analysis Workbook (.xlsx)", "📊 সম্পূর্ণ এক্সেল রিপোর্ট ডাউনলোড করুন"),
+        data=excel_buf.getvalue(),
+        file_name=f"{response_var}_{design_key}_AgriStat_Report.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+
+# ───────────────────────── Executive Footer ─────────────────────────
 st.markdown("---")
 st.markdown(
-    f"<div style='text-align: center; color: gray; font-size: 0.9em; padding-bottom: 20px;'>"
-    f"{tr('Developed by', 'ডিজাইন ও তত্ত্বাবধানে')} <b>Md. Akib Rubayiet Tahmid</b> | "
-    f"<a href='https://www.linkedin.com/in/akib-rubayiet-tahmid' target='_blank' style='text-decoration: none; color: #0A66C2; font-weight: bold;'>LinkedIn</a>"
+    f"<div style='text-align: center; color: #64748b; font-size: 0.88rem; padding-bottom: 24px;'>"
+    f"AgriStat Studio • {tr('Biometric System Architecture by', 'ডিজাইন ও তত্ত্বাবধানে')} <b>Md. Akib Rubayiet Tahmid</b> | "
+    f"<a href='https://www.linkedin.com/in/akib-rubayiet-tahmid' target='_blank' style='text-decoration: none; color: #0284c7; font-weight: 600;'>LinkedIn</a>"
     f"</div>",
     unsafe_allow_html=True
 )
