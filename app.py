@@ -1,4 +1,3 @@
-
 """
 AgriStat Pro – RCBD Field Trial Analyzer
 RCBD ANOVA | LSD / Tukey / Duncan with letter grouping | Assumption checks |
@@ -20,16 +19,49 @@ from scipy import stats
 from statsmodels.formula.api import ols
 
 warnings.filterwarnings("ignore")
-st.set_page_config(page_title="AgriStat Pro – RCBD Analyzer", page_icon="🌾", layout="wide")
 
+# পেজ কনফিগারেশন (গমের ছবি বাদ দিয়ে ক্লিন স্টাইল)
+st.set_page_config(page_title="AgriStat Pro | Field Trial Suite", layout="wide")
+
+# সিএসএস: গিটহাব লোগো, ফোর্ক এবং টপবার সম্পূর্ণ হাইড + প্রফেশনাল টাইপোগ্রাফি
 st.markdown("""<style>
 @import url('https://fonts.maateen.me/kalpurush/font.css');
-html, body, .stApp, p, label, li, td, th, h1, h2, h3, h4 {
-    font-family: 'Times New Roman','Kalpurush','Liberation Serif',serif;
+
+/* গিটহাব হেডার, ফোর্ক বাটন ও মেনু সম্পূর্ণ হাইড */
+header[data-testid="stHeader"] {
+    display: none !important;
 }
-[data-testid="stMetric"] {background:rgba(74,112,139,.08); border:1px solid rgba(74,112,139,.25);
-    border-radius:10px; padding:10px 14px;}
+#MainMenu {
+    display: none !important;
+}
+footer {
+    display: none !important;
+}
+.stDeployButton {
+    display: none !important;
+}
+
+/* ফন্ট ও বডি স্টাইল */
+html, body, .stApp, p, label, li, td, th, h1, h2, h3, h4 {
+    font-family: 'Times New Roman', 'Kalpurush', 'Liberation Serif', serif;
+}
+
+/* মেট্রিক কার্ড ডিজাইন */
+[data-testid="stMetric"] {
+    background: rgba(56, 189, 248, 0.05);
+    border: 1px solid rgba(56, 189, 248, 0.2);
+    border-radius: 12px;
+    padding: 12px 16px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.03);
+}
+
+/* সাইডবার টগল বাটন পজিশন ফিক্স */
+[data-testid="collapsedControl"] {
+    top: 15px;
+    left: 15px;
+}
 </style>""", unsafe_allow_html=True)
+
 plt.rcParams.update({"font.family": "serif",
                      "font.serif": ["Times New Roman", "Liberation Serif", "DejaVu Serif"]})
 
@@ -54,7 +86,6 @@ METHODS = ["Tukey HSD", "LSD", "Duncan (DMRT)"]
 
 
 def make_crit(method, alpha, mse, dfe, r, k):
-    """Critical difference as a function of the number of means spanned (p)."""
     se = np.sqrt(mse / r)
     if method == "LSD":
         c = stats.t.ppf(1 - alpha / 2, dfe) * np.sqrt(2) * se
@@ -66,7 +97,6 @@ def make_crit(method, alpha, mse, dfe, r, k):
 
 
 def letter_groups(means, crit):
-    """Compact letter display (a, b, ab …) from means and a critical-difference function."""
     means = np.asarray(means, float)
     order = np.argsort(-means)
     m, k = means[order], len(means)
@@ -132,7 +162,7 @@ def analyze(df, trt, rep, y, tf="None", alpha=0.05, method="Tukey HSD"):
     }).fillna("")
 
     cnt = d.groupby("TRT").size().reindex(order)
-    r = k / np.sum(1 / cnt)                                   # harmonic mean replication
+    r = k / np.sum(1 / cnt)
     mean_t = d.groupby("TRT")["Y"].mean().reindex(order)
     mean_o = d.groupby("TRT")["Y0"].mean().reindex(order)
     sd = d.groupby("TRT")["Y"].std().reindex(order)
@@ -184,7 +214,7 @@ def interpret(r):
     prec = ("good", "ভালো") if r["cv"] <= 10 else ("acceptable", "গ্রহণযোগ্য") if r["cv"] <= 15 else ("high (interpret with care)", "বেশি (সতর্কতার সাথে ব্যাখ্যা করুন)")
     if BN:
         s = (f"{r['y']} এর উপর {r['trt']} এর প্রভাব {'পরিসংখ্যানগতভাবে তাৎপর্যপূর্ণ' if sig else 'তাৎপর্যপূর্ণ নয়'} "
-             f"(F = {r['f_trt']:.2f}, p = {r['p_trt']:.4f}). ")
+             f"(F = {r['f_trt']:.2f}, p = {r['p_trt']:.4f})। ")
         if sig:
             s += f"সর্বোচ্চ গড় ({best['Mean']}) পাওয়া গেছে '{best['Treatment']}' এ এবং সর্বনিম্ন ({worst['Mean']}) '{worst['Treatment']}' এ। "
         s += f"CV = {r['cv']:.2f}% – পরীক্ষণের নির্ভুলতা {prec[1]}।"
@@ -315,12 +345,34 @@ def guess(cols, keys, default):
     return default
 
 
-# ───────────────────────── UI ─────────────────────────
-st.title(tr("🌾 AgriStat Pro – RCBD Field Trial Analyzer", "🌾 অ্যাগ্রিস্ট্যাট প্রো – RCBD ফিল্ড ট্রায়াল অ্যানালাইজার"))
-st.caption(tr("ANOVA • LSD / Tukey / Duncan letters • Assumption checks • Publication plots • Word & Excel reports",
-              "অ্যানোভা • LSD / Tukey / Duncan অক্ষর গ্রুপিং • অনুমান যাচাই • পাবলিকেশন প্লট • Word ও Excel রিপোর্ট"))
+# ───────────────────────── Professional Hero Title ─────────────────────────
+badge_label = tr("RESEARCH STATISTICAL ENGINE", "বায়োমেট্রিক রিসার্চ ইঞ্জিন")
+hero_subtitle = tr("RCBD Field Trial & Advanced Biometric Analytics", "আরসিবিডি ফিল্ড ট্রায়াল ও বায়োমেট্রিক অ্যানালিটিক্স প্ল্যাটফর্ম")
+hero_caption = tr("Two-Way ANOVA • Post-hoc Grouping • Assumption Diagnostics • Publication Graphics",
+                  "টু-ওয়ে অ্যানোভা • পোস্ট-হক লেটার গ্রুপিং • মডেল ডায়াগনস্টিকস • হাই-রেজ্যুলেশন গ্রাফিক্স")
 
-st.sidebar.header(tr("1. Data", "১. ডেটা"))
+st.markdown(f"""
+<div style="padding: 12px 0px 24px 0px;">
+    <span style="font-size: 0.75rem; font-weight: 700; letter-spacing: 2.5px; text-transform: uppercase; 
+                 background: rgba(56, 189, 248, 0.12); color: #38bdf8; padding: 6px 14px; 
+                 border-radius: 30px; border: 1px solid rgba(56, 189, 248, 0.3);">
+        {badge_label}
+    </span>
+    <h1 style="font-size: 2.7rem; font-weight: 800; margin: 14px 0 6px 0; letter-spacing: -0.5px; line-height: 1.15; font-family: 'Times New Roman', serif;">
+        AgriStat <span style="background: linear-gradient(135deg, #38bdf8 0%, #818cf8 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">Pro</span>
+    </h1>
+    <p style="font-size: 1.15rem; font-weight: 400; opacity: 0.88; margin: 0; font-family: 'Times New Roman', 'Kalpurush', serif;">
+        {hero_subtitle}
+    </p>
+    <p style="font-size: 0.86rem; opacity: 0.65; margin-top: 6px; letter-spacing: 0.3px;">
+        {hero_caption}
+    </p>
+</div>
+""", unsafe_allow_html=True)
+
+
+# ───────────────────────── Sidebar Data ─────────────────────────
+st.sidebar.header(tr("1. Data Input", "১. ডেটা ইনপুট"))
 src = st.sidebar.radio(tr("Source", "সোর্স"), (tr("Editable sheet", "এডিটেবল শীট"), tr("Upload file", "ফাইল আপলোড"),
                                                tr("Demo data", "ডেমো ডেটা")))
 df = None
@@ -371,15 +423,14 @@ method = st.sidebar.selectbox(tr("Mean comparison", "গড় তুলনা")
 alpha = st.sidebar.selectbox(tr("Significance level (α)", "তাৎপর্য স্তর (α)"), [0.05, 0.01, 0.10])
 tf = st.sidebar.selectbox(tr("Data transformation", "ডেটা ট্রান্সফরমেশন"), list(TRANSFORMS))
 
-# ───────────────────────── Developer Info ─────────────────────────
+# ───────────────────────── Developer Profile (No GitHub Mention) ─────────────────────────
 st.sidebar.markdown("---")
 with st.sidebar.expander(f"👨‍💻 {tr('Developer Profile', 'ডেভেলপার পরিচিতি')}", expanded=True):
     st.markdown(f"""
     **Md. Akib Rubayiet Tahmid**  
     *{tr('Undergraduate Agricultural Researcher', 'কৃষি গবেষক')}*  
     
-    [![LinkedIn](https://img.shields.io/badge/LinkedIn-Connect-0A66C2?style=flat&logo=linkedin&logoColor=white)](https://www.linkedin.com/in/akib-rubayiet-tahmid)  
-    [![GitHub](https://img.shields.io/badge/GitHub-AkibRTahmid-181717?style=flat&logo=github&logoColor=white)](https://github.com/AkibRTahmid)
+    [![LinkedIn](https://img.shields.io/badge/LinkedIn-Connect-0A66C2?style=flat&logo=linkedin&logoColor=white)](https://www.linkedin.com/in/akib-rubayiet-tahmid)
     """)
 
 try:
@@ -485,13 +536,12 @@ with t5:
         e2.info(tr("Add `python-docx` to requirements.txt to enable Word export.",
                    "Word এক্সপোর্টের জন্য requirements.txt এ `python-docx` যোগ করুন।"))
 
-# ───────────────────────── Footer ─────────────────────────
+# ───────────────────────── Clean Footer (Only Professional Identity) ─────────────────────────
 st.markdown("---")
 st.markdown(
-    f"<div style='text-align: center; color: gray; font-size: 0.9em;'>"
-    f"{tr('Developed by', 'তৈরি করেছেন')} <b>Md. Akib Rubayiet Tahmid</b> | "
-    f"<a href='https://www.linkedin.com/in/akib-rubayiet-tahmid' target='_blank' style='text-decoration: none; color: #0A66C2; font-weight: bold;'>LinkedIn Profile</a> | "
-    f"<a href='https://github.com/AkibRTahmid/Agri-stat-app' target='_blank' style='text-decoration: none; color: #333; font-weight: bold;'>GitHub Repo</a>"
+    f"<div style='text-align: center; color: gray; font-size: 0.9em; padding-bottom: 20px;'>"
+    f"{tr('Developed by', 'ডিজাইন ও তত্ত্বাবধানে')} <b>Md. Akib Rubayiet Tahmid</b> | "
+    f"<a href='https://www.linkedin.com/in/akib-rubayiet-tahmid' target='_blank' style='text-decoration: none; color: #0A66C2; font-weight: bold;'>LinkedIn</a>"
     f"</div>",
     unsafe_allow_html=True
 )
