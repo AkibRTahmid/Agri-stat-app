@@ -1,5 +1,6 @@
+
 """
-🌾 AgriStat Pro – RCBD Field Trial Analyzer
+AgriStat Pro – RCBD Field Trial Analyzer
 RCBD ANOVA | LSD / Tukey / Duncan with letter grouping | Assumption checks |
 Transformations | Multi-trait summary | Excel + Word + PNG/PDF export | EN/BN
 """
@@ -370,6 +371,17 @@ method = st.sidebar.selectbox(tr("Mean comparison", "গড় তুলনা")
 alpha = st.sidebar.selectbox(tr("Significance level (α)", "তাৎপর্য স্তর (α)"), [0.05, 0.01, 0.10])
 tf = st.sidebar.selectbox(tr("Data transformation", "ডেটা ট্রান্সফরমেশন"), list(TRANSFORMS))
 
+# ───────────────────────── Developer Info ─────────────────────────
+st.sidebar.markdown("---")
+with st.sidebar.expander(f"👨‍💻 {tr('Developer Profile', 'ডেভেলপার পরিচিতি')}", expanded=True):
+    st.markdown(f"""
+    **Md. Akib Rubayiet Tahmid**  
+    *{tr('Undergraduate Agricultural Researcher', 'কৃষি গবেষক')}*  
+    
+    [![LinkedIn](https://img.shields.io/badge/LinkedIn-Connect-0A66C2?style=flat&logo=linkedin&logoColor=white)](https://www.linkedin.com/in/akib-rubayiet-tahmid)  
+    [![GitHub](https://img.shields.io/badge/GitHub-AkibRTahmid-181717?style=flat&logo=github&logoColor=white)](https://github.com/AkibRTahmid)
+    """)
+
 try:
     res = analyze(df, trt, rep, resp, tf, alpha, method)
 except Exception as e:
@@ -473,3 +485,13 @@ with t5:
         e2.info(tr("Add `python-docx` to requirements.txt to enable Word export.",
                    "Word এক্সপোর্টের জন্য requirements.txt এ `python-docx` যোগ করুন।"))
 
+# ───────────────────────── Footer ─────────────────────────
+st.markdown("---")
+st.markdown(
+    f"<div style='text-align: center; color: gray; font-size: 0.9em;'>"
+    f"{tr('Developed by', 'তৈরি করেছেন')} <b>Md. Akib Rubayiet Tahmid</b> | "
+    f"<a href='https://www.linkedin.com/in/akib-rubayiet-tahmid' target='_blank' style='text-decoration: none; color: #0A66C2; font-weight: bold;'>LinkedIn Profile</a> | "
+    f"<a href='https://github.com/AkibRTahmid/Agri-stat-app' target='_blank' style='text-decoration: none; color: #333; font-weight: bold;'>GitHub Repo</a>"
+    f"</div>",
+    unsafe_allow_html=True
+)
