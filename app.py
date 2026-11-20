@@ -1,5 +1,5 @@
 """
-AgriStat Studio – Enterprise Biometrics & Experimental Design Suite (v3.6)
+AgriStat Studio – Enterprise Biometrics & Experimental Design Suite (v3.7)
 Designs : CRD | RCBD | Factorial (RCBD) | Split-Plot (RCBD)
 Methods : Tukey HSD, LSD, Bonferroni, Duncan (DMRT), SNK, Dunnett (vs Control)
 Analytics: GLM (Type I/III SS), Trend Contrasts, Interaction Slicing, Genetic Parameters
@@ -33,7 +33,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# ───────────────────────── UI Styling (Robust Sidebar Toggle) ─────────────────────────
+# ───────────────────────── UI Styling (Theme-Safe & Floating Sidebar Toggle) ─────────────────────────
 st.markdown("""
 <style>
 @import url('https://fonts.maateen.me/kalpurush/font.css');
@@ -51,6 +51,7 @@ footer {
 header[data-testid="stHeader"] { 
     background: transparent !important;
     pointer-events: auto !important;
+    height: 3rem !important;
 }
 
 /* System typography */
@@ -69,39 +70,42 @@ html, body, .stApp, p, label, li, td, th, h1, h2, h3, h4, input, button, textare
 button[data-baseweb="tab"] { font-size: 0.95rem !important; font-weight: 600 !important; }
 [data-testid="stSidebar"] { border-right: 1px solid rgba(128,128,128,0.20); }
 
-/* সাইডবার বন্ধ হলে যাতে রি-ওপেন বাটনটি সবসময় উজ্জ্বল ও দৃশ্যমান থাকে */
+/* নিশ্চিত ফ্লোটিং সাইডবার রি-ওপেন বাটন */
+header [data-testid="stSidebarCollapseButton"],
+header button[aria-label*="sidebar" i],
+header button[aria-label*="Sidebar" i],
 [data-testid="stSidebarCollapsedControl"],
 [data-testid="collapsedControl"] {
-    display: block !important;
+    display: flex !important;
     visibility: visible !important;
     opacity: 1 !important;
-    z-index: 999999 !important;
-}
-
-[data-testid="stSidebarCollapsedControl"] button,
-[data-testid="collapsedControl"] button {
-    background-color: #0284c7 !important;
+    z-index: 99999999 !important;
+    position: fixed !important;
+    top: 12px !important;
+    left: 12px !important;
+    background: #0284c7 !important;
     border: 1px solid #38bdf8 !important;
     border-radius: 8px !important;
     width: 38px !important;
     height: 38px !important;
-    display: flex !important;
     align-items: center !important;
     justify-content: center !important;
-    box-shadow: 0 4px 12px rgba(2, 132, 199, 0.45) !important;
+    box-shadow: 0 4px 14px rgba(2, 132, 199, 0.5) !important;
     cursor: pointer !important;
 }
 
-[data-testid="stSidebarCollapsedControl"] button:hover,
-[data-testid="collapsedControl"] button:hover {
-    background-color: #0369a1 !important;
+header [data-testid="stSidebarCollapseButton"]:hover,
+[data-testid="stSidebarCollapsedControl"]:hover {
+    background: #0369a1 !important;
 }
 
-[data-testid="stSidebarCollapsedControl"] button svg,
-[data-testid="collapsedControl"] button svg {
+header [data-testid="stSidebarCollapseButton"] svg,
+header button svg,
+[data-testid="stSidebarCollapsedControl"] svg {
     fill: #ffffff !important;
     stroke: #ffffff !important;
     color: #ffffff !important;
+    display: block !important;
     width: 20px !important;
     height: 20px !important;
 }
@@ -340,8 +344,16 @@ def fit_model(d, design, labels=None, sstype="III"):
     beta, fitted, resid, rss, rank = _ls(X, y)
     dfe = n - rank
     if dfe <= 0:
-        raise AnalysisError("No error degrees of freedom (DF <= 0). Insufficient data points.",
-                            "এরর ডিগ্রি অব ফ্রিডম শূন্য (DF <= 0)। ডেটা অপর্যাপ্ত।")
+        raise AnalysisError(
+            f"Zero or negative error degrees of freedom (DF_error = {dfe} ≤ 0). "
+            f"Total observations (N = {n}) are insufficient for model parameters (rank = {rank}). "
+            f"ANOVA requires experimental replication (≥ 2 observations per treatment level). "
+            f"Aggregated or survey summaries without field replicates cannot be analyzed using ANOVA.",
+            f"এরর ডিগ্রি অব ফ্রিডম শূন্য বা ঋণাত্মক (DF_error = {dfe} ≤ 0)। "
+            f"মোট পর্যবেক্ষণ সংখ্যা (N = {n}) মডেলের প্যারামিটার সংখ্যার জন্য অপর্যাপ্ত। "
+            f"অ্যানোভার জন্য অবশ্যই প্রতি ট্রিটমেন্টে একাধিক রেপ্লিকেশন (কমপক্ষে ২টি) থাকতে হবে। "
+            f"একক সারসংক্ষেপ বা সার্ভে ডেটায় ফিল্ড-ট্রায়াল অ্যানোভা রান করা যায় না।"
+        )
 
     rows = {}
     for i, t in enumerate(terms):
@@ -515,6 +527,7 @@ def mean_family(d, fit, family, err_key, label, method, alpha, tf, ctrl_idx=0, c
     if comparable and k >= 2:
         rows = []
         if method == "Dunnett (vs Control)":
+            ctrl_idx = min(max(0, ctrl_idx), k - 1)
             ctrl_name = names[ctrl_idx]
             for iv in range(k):
                 if iv == ctrl_idx:
@@ -712,18 +725,20 @@ def studentized_residuals(fit):
 def generate_sample_dataset(design):
     rng = np.random.default_rng(2026)
     if design == "CRD":
-        trts = ["Cultivar_Alpha", "Cultivar_Beta", "Cultivar_Gamma", "Cultivar_Delta"]
+        # Tomato Cultivar Trial (5 cultivars x 5 replications = 25 observations)
+        trts = ["Cultivar_Alpha", "Cultivar_Beta", "Cultivar_Gamma", "Cultivar_Delta", "Cultivar_Epsilon"]
         rows = []
-        for t, base in zip(trts, [52.4, 61.2, 70.8, 64.5]):
+        for t, base in zip(trts, [51.1, 61.3, 45.1, 70.1, 57.1]):
             for _ in range(5):
                 rows.append({
                     "Cultivar": t,
-                    "Fruit_Yield_kg": round(base + rng.normal(0, 2.4), 2),
-                    "Brix_Percent": round(base * 0.08 + rng.normal(0, 0.25), 2)
+                    "Fruit_Yield_kg": round(base + rng.normal(0, 1.2), 2),
+                    "Brix_Percent": round(base * 0.08 + rng.normal(0, 0.15), 2)
                 })
         return pd.DataFrame(rows)
 
     elif design == "RCBD":
+        # Maize Nitrogen Trial (5 levels of N x 4 blocks)
         trts = ["N0_Control", "N60_kg_ha", "N120_kg_ha", "N180_kg_ha", "N240_kg_ha"]
         rows = []
         for r in range(4):
@@ -738,6 +753,7 @@ def generate_sample_dataset(design):
         return pd.DataFrame(rows)
 
     elif design == "FACT":
+        # Rice Crop Spacing x Potassium Fertilizer
         spacing = ["Spacing_15cm", "Spacing_20cm", "Spacing_25cm"]
         k_levels = ["K0_Control", "K40_kg_ha", "K80_kg_ha"]
         rows = []
@@ -754,6 +770,7 @@ def generate_sample_dataset(design):
         return pd.DataFrame(rows)
 
     else:  # SPLIT
+        # Soybean Irrigation (Main) x Sowing Date (Sub)
         main_plots = ["Irrig_Rainfed", "Irrig_Full"]
         sub_plots = ["Sowing_Early", "Sowing_Mid", "Sowing_Late"]
         rows = []
@@ -776,15 +793,15 @@ def blank_template(design):
     s = lambda: pd.Series(dtype=str)
     f = lambda: pd.Series(dtype=float)
     if design == "CRD":
-        return pd.DataFrame({"Treatment": s(), "Response": f()})
+        return pd.DataFrame({"Treatment": s(), "Yield": f()})
     if design == "RCBD":
-        return pd.DataFrame({"Replication": s(), "Treatment": s(), "Response": f()})
+        return pd.DataFrame({"Replication": s(), "Treatment": s(), "Yield": f()})
     if design == "FACT":
-        return pd.DataFrame({"Block": s(), "Factor_A": s(), "Factor_B": s(), "Response": f()})
-    return pd.DataFrame({"Rep": s(), "MainPlot": s(), "SubPlot": s(), "Response": f()})
+        return pd.DataFrame({"Block": s(), "Factor_A": s(), "Factor_B": s(), "Yield": f()})
+    return pd.DataFrame({"Rep": s(), "MainPlot": s(), "SubPlot": s(), "Yield": f()})
 
 
-# ───────────────────────── Robust File Reading ─────────────────────────
+# ───────────────────────── Robust File Reading & Intelligent Column Mapping ─────────────────────────
 def is_numeric_like(s):
     if pd.api.types.is_numeric_dtype(s):
         return True
@@ -792,12 +809,22 @@ def is_numeric_like(s):
     return nn > 0 and pd.to_numeric(s, errors="coerce").notna().sum() / nn >= 0.85
 
 
+def is_design_metadata_col(col_name: str) -> bool:
+    """Detects whether a column is a design/experimental index rather than a measurement trait."""
+    c = str(col_name).strip().lower()
+    exact_match = bool(re.search(r"^(rep|replication|block|blk|sl|id|plot|entry|sno|serial|no)$", c))
+    suffix_match = bool(re.search(r"(_id|plot_no|rep_no|block_no|sl_no)$", c))
+    return exact_match or suffix_match
+
+
 def guess_columns(df, spec):
     cols = list(df.columns)
     is_cat = {c: not pd.api.types.is_numeric_dtype(df[c]) for c in cols}
     rep = None
     if spec["needs_rep"]:
-        rep = next((c for c in cols if re.search(r"rep|block|blk", c, re.I)), None)
+        rep = next((c for c in cols if re.search(r"^(rep|block|blk|replication)", c, re.I)), None)
+        if rep is None:
+            rep = next((c for c in cols if re.search(r"rep|block|blk", c, re.I)), None)
         if rep is None:
             rep = next((c for c in cols if is_cat[c]), cols[0])
     rest = [c for c in cols if c != rep]
@@ -1093,11 +1120,23 @@ if spec["two_factor"]:
     col_map["b"] = sb_select("Factor B (Sub-Plot)", "ফ্যাক্টর B (সাব-প্লট)", avail_for_b, key=f"map_b_{design_key}",
                              index=avail_for_b.index(guess_map["b"]) if guess_map["b"] in avail_for_b else 0)
 
-numeric_candidates = [c for c in cols_list if c not in col_map.values() and is_numeric_like(raw_df[c])]
+# ── Intelligent Response Variable Filtering (Prevents Picking Replication/Block as Y) ──
+all_numeric = [c for c in cols_list if c not in col_map.values() and is_numeric_like(raw_df[c])]
+
+# Exclude structural columns from being candidate Y unless nothing else exists
+clean_numeric = [c for c in all_numeric if not is_design_metadata_col(c)]
+numeric_candidates = clean_numeric if clean_numeric else all_numeric
+
 if not numeric_candidates:
-    st.error(tr("No continuous response variable detected.", "কোনো সংখ্যাভিত্তিক রেসপন্স ভ্যারিয়েবল পাওয়া যায়নি।"))
+    st.error(tr("No continuous response variable detected in the dataset.", "কোনো সংখ্যাভিত্তিক রেসপন্স ভ্যারিয়েবল পাওয়া যায়নি।"))
     st.stop()
-response_var = sb_select("Response Metric (Y)", "রেসপন্স ভ্যারিয়েবল (Y)", numeric_candidates, key="resp_pick")
+
+# Prioritize agronomic trait keywords for default response variable
+trait_keywords = r"yield|fruit|brix|grain|height|biomass|weight|length|count|pod|prod|area|chlorophyll|tiller"
+pref_y = [c for c in numeric_candidates if re.search(trait_keywords, str(c), re.I)]
+default_y_idx = numeric_candidates.index(pref_y[0]) if pref_y else 0
+
+response_var = sb_select("Response Metric (Y)", "রেসপন্স ভ্যারিয়েবল (Y)", numeric_candidates, key="resp_pick", index=default_y_idx)
 
 # ───────────────────────── Sidebar: Parameters ─────────────────────────
 st.sidebar.markdown(f"### ⚙️ {tr('4. Model Parameters', '৪. মডেল ও টেস্ট সেটিংস')}")
