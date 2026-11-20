@@ -1,5 +1,5 @@
 """
-AgriStat Studio – Enterprise Biometrics & Experimental Design Suite (v3.2)
+AgriStat Studio – Enterprise Biometrics & Experimental Design Suite (v3.3)
 Designs : CRD | RCBD | Factorial (RCBD) | Split-Plot (RCBD)
 Methods : Tukey HSD, LSD, Bonferroni, Duncan (DMRT), SNK, Dunnett (vs Control)
 Analytics: GLM (Type I/III SS), Trend Contrasts, Interaction Slicing, Genetic Parameters
@@ -33,12 +33,12 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# ───────────────────────── UI Styling (Mobile-Friendly & Theme-Safe) ─────────────────────────
+# ───────────────────────── UI Styling (Mobile-Friendly, Theme-Safe & Prominent Toggle) ─────────────────────────
 st.markdown("""
 <style>
 @import url('https://fonts.maateen.me/kalpurush/font.css');
 
-/* Hide toolbar / deploy / footer while preserving the mobile sidebar toggle */
+/* Hide toolbar, deploy button & footer while preserving header */
 [data-testid="stToolbar"], [data-testid="stDecoration"], .stDeployButton,
 #MainMenu, footer { display: none !important; }
 header[data-testid="stHeader"] { background: transparent !important; }
@@ -58,6 +58,20 @@ html, body, .stApp, p, label, li, td, th, h1, h2, h3, h4, input, button, textare
 }
 button[data-baseweb="tab"] { font-size: 0.95rem !important; font-weight: 600 !important; }
 [data-testid="stSidebar"] { border-right: 1px solid rgba(128,128,128,0.20); }
+
+/* Prominent sidebar toggle button (visible in both dark and light modes) */
+[data-testid="stSidebarCollapsedControl"] {
+    display: block !important;
+    visibility: visible !important;
+    z-index: 999999 !important;
+    color: #38bdf8 !important;
+    background: rgba(56, 189, 248, 0.22) !important;
+    border: 1px solid rgba(56, 189, 248, 0.45) !important;
+    border-radius: 8px !important;
+    padding: 4px 6px !important;
+    margin: 12px 0 0 12px !important;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25) !important;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -127,7 +141,6 @@ def _okey(prefix, options):
     return f"{prefix}_{zlib.crc32('|'.join(map(str, options)).encode('utf-8'))}"
 
 
-# ফিক্সড সাইডবার ক্যাপশন (নেগেটিভ মার্জিন সরিয়ে মোবাইল ওভারল্যাপ সমাধান)
 def _sb_caption(en, bn):
     st.sidebar.markdown(
         f"<div style='font-size:0.86rem; font-weight:600; margin:14px 0 5px 0; opacity:0.9;'>{tr(en, bn)}</div>",
@@ -662,7 +675,7 @@ def studentized_residuals(fit):
     return e / np.sqrt(np.clip(s2_i, 1e-300, None) * (1 - h))
 
 
-# ───────────────────────── New Generic Agricultural Datasets ─────────────────────────
+# ───────────────────────── Generic Agricultural Benchmark Datasets ─────────────────────────
 def generate_sample_dataset(design):
     rng = np.random.default_rng(2026)
     if design == "CRD":
