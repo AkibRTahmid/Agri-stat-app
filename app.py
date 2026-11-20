@@ -1,5 +1,5 @@
 """
-AgriStat Studio – Enterprise Biometrics & Experimental Design Suite (v3.3)
+AgriStat Studio – Enterprise Biometrics & Experimental Design Suite (v3.4)
 Designs : CRD | RCBD | Factorial (RCBD) | Split-Plot (RCBD)
 Methods : Tukey HSD, LSD, Bonferroni, Duncan (DMRT), SNK, Dunnett (vs Control)
 Analytics: GLM (Type I/III SS), Trend Contrasts, Interaction Slicing, Genetic Parameters
@@ -33,15 +33,20 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# ───────────────────────── UI Styling (Mobile-Friendly, Theme-Safe & Prominent Toggle) ─────────────────────────
+# ───────────────────────── UI Styling (Fixed Floating Sidebar Toggle) ─────────────────────────
 st.markdown("""
 <style>
 @import url('https://fonts.maateen.me/kalpurush/font.css');
 
-/* Hide toolbar, deploy button & footer while preserving header */
+/* Hide toolbar, deploy button & footer */
 [data-testid="stToolbar"], [data-testid="stDecoration"], .stDeployButton,
 #MainMenu, footer { display: none !important; }
-header[data-testid="stHeader"] { background: transparent !important; }
+
+/* Keep header area clean */
+header[data-testid="stHeader"] { 
+    background: transparent !important; 
+    height: 3rem !important;
+}
 
 /* System typography */
 html, body, .stApp, p, label, li, td, th, h1, h2, h3, h4, input, button, textarea {
@@ -49,7 +54,7 @@ html, body, .stApp, p, label, li, td, th, h1, h2, h3, h4, input, button, textare
                  "Helvetica Neue", Arial, sans-serif !important;
 }
 
-/* Translucent KPI cards for adaptive dark/light backgrounds */
+/* Adaptive KPI cards */
 [data-testid="stMetric"] {
     background: rgba(128,128,128,0.07);
     border: 1px solid rgba(128,128,128,0.22);
@@ -59,18 +64,30 @@ html, body, .stApp, p, label, li, td, th, h1, h2, h3, h4, input, button, textare
 button[data-baseweb="tab"] { font-size: 0.95rem !important; font-weight: 600 !important; }
 [data-testid="stSidebar"] { border-right: 1px solid rgba(128,128,128,0.20); }
 
-/* Prominent sidebar toggle button (visible in both dark and light modes) */
-[data-testid="stSidebarCollapsedControl"] {
-    display: block !important;
+/* ১০০% নিশ্চিত সাইডবার টগল বাটন: স্ক্রিনের বাঁ-পাশে সবসময় ফ্লোটিং নীল বাটন হিসেবে থাকবে */
+[data-testid="stSidebarCollapsedControl"],
+[data-testid="collapsedControl"] {
+    display: flex !important;
     visibility: visible !important;
-    z-index: 999999 !important;
-    color: #38bdf8 !important;
-    background: rgba(56, 189, 248, 0.22) !important;
-    border: 1px solid rgba(56, 189, 248, 0.45) !important;
+    opacity: 1 !important;
+    z-index: 9999999 !important;
+    position: fixed !important;
+    top: 14px !important;
+    left: 14px !important;
+    background: #0284c7 !important;
+    border: 1px solid #38bdf8 !important;
     border-radius: 8px !important;
-    padding: 4px 6px !important;
-    margin: 12px 0 0 12px !important;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25) !important;
+    padding: 6px !important;
+    box-shadow: 0 4px 14px rgba(2, 132, 199, 0.45) !important;
+    cursor: pointer !important;
+}
+
+[data-testid="stSidebarCollapsedControl"] svg,
+[data-testid="collapsedControl"] svg {
+    fill: #ffffff !important;
+    stroke: #ffffff !important;
+    width: 22px !important;
+    height: 22px !important;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -250,7 +267,7 @@ def prepare(df, design, cols, y, tf="None", avg_dup=False):
         keys = list(sel.keys())
         d = d.groupby(keys, sort=False, as_index=False)["Y0"].mean()
 
-    # Transformation domain checks
+    # Domain safety checks
     if tf == "log10(x)" and (d["Y0"] <= 0).any():
         raise AnalysisError("log10(x) requires all values > 0. Use log10(x + 1) for zeros.",
                             "log10(x) এর জন্য সব মান > 0 হতে হবে। শূন্য থাকলে log10(x + 1) ব্যবহার করুন।")
@@ -626,7 +643,7 @@ def compute_genetic_parameters(model_fit, d, response_var):
     pcv = (np.sqrt(var_p) / gm) * 100
     h2_b = (var_g / var_p) * 100 if var_p > 0 else 0.0
 
-    k_sel = 2.06  # 5% selection intensity
+    k_sel = 2.06
     ga = k_sel * np.sqrt(var_p) * (h2_b / 100.0)
     gam = (ga / gm) * 100.0
 
@@ -679,7 +696,6 @@ def studentized_residuals(fit):
 def generate_sample_dataset(design):
     rng = np.random.default_rng(2026)
     if design == "CRD":
-        # Tomato Cultivar Trial (4 cultivars x 5 replications)
         trts = ["Cultivar_Alpha", "Cultivar_Beta", "Cultivar_Gamma", "Cultivar_Delta"]
         rows = []
         for t, base in zip(trts, [52.4, 61.2, 70.8, 64.5]):
@@ -692,7 +708,6 @@ def generate_sample_dataset(design):
         return pd.DataFrame(rows)
 
     elif design == "RCBD":
-        # Maize Nitrogen Trial (5 levels of N x 4 blocks)
         trts = ["N0_Control", "N60_kg_ha", "N120_kg_ha", "N180_kg_ha", "N240_kg_ha"]
         rows = []
         for r in range(4):
@@ -707,7 +722,6 @@ def generate_sample_dataset(design):
         return pd.DataFrame(rows)
 
     elif design == "FACT":
-        # Rice Crop Spacing x Potassium Fertilizer
         spacing = ["Spacing_15cm", "Spacing_20cm", "Spacing_25cm"]
         k_levels = ["K0_Control", "K40_kg_ha", "K80_kg_ha"]
         rows = []
@@ -724,7 +738,6 @@ def generate_sample_dataset(design):
         return pd.DataFrame(rows)
 
     else:  # SPLIT
-        # Soybean Irrigation (Main) x Sowing Date (Sub)
         main_plots = ["Irrig_Rainfed", "Irrig_Full"]
         sub_plots = ["Sowing_Early", "Sowing_Mid", "Sowing_Late"]
         rows = []
@@ -975,7 +988,7 @@ def cv_note(cv):
 # ───────────────────────── Executive Header ─────────────────────────
 st.markdown(f"""
 <div style="padding: 4px 0 16px 0; border-bottom: 1px solid rgba(128,128,128,0.25); margin-bottom: 20px;">
-    <span style="font-size: 0.72rem; font-weight: 700; letter-spacing: 2px; text-transform: uppercase;
+    <span style="font-size: 0.72rem; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; 
                  background: rgba(14,165,233,0.14); color: #0284c7; padding: 4px 10px; border-radius: 20px;">
         {tr("ENTERPRISE BIOMETRIC SUITE", "বায়োমেট্রিক রিসার্চ প্ল্যাটফর্ম")}
     </span>
@@ -983,7 +996,7 @@ st.markdown(f"""
         AgriStat <span style="color: #0284c7;">Studio</span>
     </h1>
     <p style="font-size: 0.95rem; opacity: 0.8; margin: 0;">
-        {tr("Design-Aware General Linear Model • Post-Hoc Groupings • Genetic Parameters • High-Precision Agronomic Analytics",
+        {tr("Design-Aware General Linear Model • Post-Hoc Groupings • Genetic Parameters • High-Precision Agronomic Analytics", 
             "ডিজাইন-সচেতন লিনিয়ার মডেলিং • পোস্ট-হক লেটার গ্রুপিং • জেনেটিক প্যারামিটার • পাবলিকেশন-রেডি বায়োমেট্রিক্স")}
     </p>
 </div>
@@ -1140,7 +1153,7 @@ elif design_key == "FACT":
 else:  # SPLIT
     fam_specs = [(("A",), SPLIT_ERR_A, A_lbl, True), (("B",), "RES", B_lbl, True), (("A", "B"), "RES", f"{A_lbl} × {B_lbl}", False)]
 
-# Dunnett control level selector
+# Dunnett control selector
 ctrl_index_val = 0
 if comp_method == "Dunnett (vs Control)":
     lvl_a = list(dict.fromkeys(clean_d["A"]))
